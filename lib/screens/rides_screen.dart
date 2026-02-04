@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:ui'; // For BackdropFilter
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../providers/booking_provider.dart';
@@ -51,11 +52,19 @@ class _RidesScreenState extends State<RidesScreen> {
     final provider = Provider.of<BookingProvider>(context);
 
     return Scaffold(
+      extendBodyBehindAppBar: true, // Allow body to scroll behind AppBar
       appBar: AppBar(
-        title: const Text('My Schedules'), 
+        title: const Text('My Schedules', style: TextStyle(color: Colors.black)),
+        backgroundColor: Colors.white.withOpacity(0.7), // Translucent white
+        flexibleSpace: ClipRect(
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+            child: Container(color: Colors.transparent),
+          ),
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh, color: Colors.white),
+            icon: const Icon(Icons.refresh, color: Colors.black), // Black Icon
             onPressed: _fetchRoutes,
           )
         ],
@@ -92,7 +101,7 @@ class _RidesScreenState extends State<RidesScreen> {
                       ),
                     )
                   : ListView.builder(
-                      padding: const EdgeInsets.all(16),
+                      padding: const EdgeInsets.only(top: 100, left: 16, right: 16, bottom: 16),
                       itemCount: provider.routes.length,
                       itemBuilder: (context, index) {
                         final route = provider.routes[index];
@@ -457,18 +466,21 @@ class _RidesScreenState extends State<RidesScreen> {
   }
 
   Future<void> _handlePickup(dynamic stop, dynamic route, BookingProvider provider) async {
+    // 1. Show OTP Dialog FIRST (Immediate UI response)
+    String? otp;
+    if (stop['is_boarding_otp_required'] == true) {
+      otp = await _showOtpDialog(context, stop['employee_name']);
+      if (otp == null) return; // Cancelled
+    }
+
+    // 2. Fetch Location SECOND (After UI interaction)
+    // Show a loading indicator ideally, but provider handles async loading state well enough for now.
     final locationProvider = Provider.of<LocationProvider>(context, listen: false);
     final pos = await locationProvider.getCurrentLocation();
     
     if (pos == null) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location not valid')));
       return;
-    }
-
-    String? otp;
-    if (stop['is_boarding_otp_required'] == true) {
-      otp = await _showOtpDialog(context, stop['employee_name']);
-      if (otp == null) return; // Cancelled
     }
 
     final result = await provider.startTrip(
@@ -489,18 +501,20 @@ class _RidesScreenState extends State<RidesScreen> {
   }
 
   Future<void> _handleDrop(dynamic stop, dynamic route, BookingProvider provider) async {
+    // 1. Show OTP Dialog FIRST (Immediate UI response)
+    String? otp;
+    if (stop['is_deboarding_otp_required'] == true) {
+      otp = await _showOtpDialog(context, stop['employee_name']);
+      if (otp == null) return;
+    }
+
+    // 2. Fetch Location SECOND
     final locationProvider = Provider.of<LocationProvider>(context, listen: false);
     final pos = await locationProvider.getCurrentLocation();
     
     if (pos == null) {
        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location not valid')));
        return;
-    }
-
-    String? otp;
-    if (stop['is_deboarding_otp_required'] == true) {
-      otp = await _showOtpDialog(context, stop['employee_name']);
-      if (otp == null) return;
     }
 
     final result = await provider.dropTrip(

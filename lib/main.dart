@@ -37,15 +37,19 @@ class MyApp extends StatelessWidget {
         title: 'Driver App',
         navigatorKey: NavigationService.navigatorKey, // Add global key
         theme: ThemeData(
-          scaffoldBackgroundColor: Colors.white, // Bright White Background
+          scaffoldBackgroundColor: Colors.white, // Pure White Background
           primarySwatch: Colors.deepPurple,
           appBarTheme: const AppBarTheme(
-            backgroundColor: Color(0xFF8B85FF), // Light Bright Purple
-            foregroundColor: Colors.white,
+            backgroundColor: Colors.white, // White Header
+            foregroundColor: Colors.black, // Black Text/Icons
             elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)), // Rounded Corners
+            titleTextStyle: TextStyle(
+              color: Colors.black,
+              fontSize: 24, // Larger
+              fontWeight: FontWeight.w900, // Extra Bold
+              letterSpacing: 0.8,
             ),
+            // Removed rounded shape for glass effect compatibility
           ),
           elevatedButtonTheme: ElevatedButtonThemeData(
             style: ElevatedButton.styleFrom(

@@ -96,7 +96,7 @@ class AuthService {
       };
 
       final response = await _dio.post(ApiEndpoints.selectTenant, data: payload);
-      print('🔐 Select Tenant Response: ${response.data}');
+      print('🔐 Select Tenant Response received');
 
       final data = response.data['data'] ?? {};
       final accessToken = data['access_token'] ?? data['token'];
@@ -172,7 +172,7 @@ class AuthService {
       
       if (refreshToken == null) return {'success': false, 'error': 'No refresh token available'};
 
-      _logger.i('Refreshing Token with token: ${refreshToken.substring(0, 10)}...');
+      _logger.i('Refreshing Token...');
       
       final response = await _dio.post(ApiEndpoints.driverRefresh, data: {
         'refresh_token': refreshToken

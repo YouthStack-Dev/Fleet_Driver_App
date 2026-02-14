@@ -102,33 +102,33 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
                                     Expanded(
                                       child: Text(tenantName, style: TextStyle(color: Colors.grey[600], fontSize: 13))
                                     ),
-                                    // Status Badge
-                                    Container(
-                                      margin: const EdgeInsets.only(left: 8),
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: (account['device_active'] == true || account['device_active'] == 1) 
-                                            ? Colors.green.withOpacity(0.1) 
-                                            : Colors.red.withOpacity(0.1),
-                                        borderRadius: BorderRadius.circular(4),
-                                        border: Border.all(
-                                          color: (account['device_active'] == true || account['device_active'] == 1) 
-                                              ? Colors.green 
-                                              : Colors.red,
-                                          width: 0.5
-                                        )
-                                      ),
-                                      child: Text(
-                                        (account['device_active'] == true || account['device_active'] == 1) ? 'Active' : 'Inactive',
-                                        style: TextStyle(
-                                          color: (account['device_active'] == true || account['device_active'] == 1) 
-                                              ? Colors.green 
-                                              : Colors.red,
-                                          fontSize: 10, 
-                                          fontWeight: FontWeight.w600
+                                      // Status Badge
+                                      Container(
+                                        margin: const EdgeInsets.only(left: 8),
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: isActive 
+                                              ? Colors.green.withOpacity(0.1) 
+                                              : Colors.red.withOpacity(0.1),
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(
+                                            color: isActive 
+                                                ? Colors.green 
+                                                : Colors.red,
+                                            width: 0.5
+                                          )
+                                        ),
+                                        child: Text(
+                                          isActive ? 'Active' : 'Inactive',
+                                          style: TextStyle(
+                                            color: isActive 
+                                                ? Colors.green 
+                                                : Colors.red,
+                                            fontSize: 10, 
+                                            fontWeight: FontWeight.w600
+                                          ),
                                         ),
                                       ),
-                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: 2),

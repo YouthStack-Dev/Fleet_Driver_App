@@ -12,10 +12,10 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _licenseController = TextEditingController(text: 'LC123456');
-  final _passwordController = TextEditingController(text: 'StrongPassword123');
+  // Removed password controller
   bool _isLoading = false;
   bool _isChecking = true;
-  bool _isObscure = true;
+  // Removed _isObscure
   String? _error;
 
   @override
@@ -132,49 +132,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 15),
-              // Shadow Border for Password Field
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: TextField(
-                  controller: _passwordController,
-                  obscureText: _isObscure,
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide.none,
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide.none,
-                    ),
-                    filled: true,
-                    fillColor: Colors.white,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _isObscure ? Icons.visibility_off : Icons.visibility,
-                        color: Colors.grey,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          _isObscure = !_isObscure;
-                        });
-                      },
-                    ),
-                  ),
-                ),
-              ),
+              // Removed Password Field
               const SizedBox(height: 20),
               if (_isLoading)
                 const CircularProgressIndicator()
@@ -188,7 +146,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)), // Rectangular
                     ),
-                    child: const Text('LOG IN', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                    child: const Text('VERIFY DEVICE', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                   ),
                 ),
               if (_error != null)
@@ -215,23 +173,26 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       final auth = Provider.of<AuthProvider>(context, listen: false);
-      final result = await auth.login(
-        _licenseController.text,
-        _passwordController.text,
-      );
+      // Call verifyDevice instead of login
+      final result = await auth.verifyDevice(_licenseController.text);
 
       if (result['success'] == true) {
-         // Request permissions (RN Parity: "Driver login successful" -> Check permissions)
+         // Request permissions
          await PermissionService().checkAndRequestAllPermissions(context);
 
          if (mounted) {
-           Navigator.pushNamed(context, '/select-account');
-           // In RN, it pushes SelectAccount. If auto-confirm happens there, it pushes Schedules.
+           // Navigate to Vendor Selection Screen
+           // Passing license number to the next screen
+           Navigator.pushNamed(
+             context, 
+             '/vendor-select', 
+             arguments: _licenseController.text
+           );
          }
       } else {
         if (mounted) {
           setState(() {
-            _error = result['error']?.toString();
+            _error = result['error']?.toString() ?? result['message']?.toString() ?? 'Verification failed';
           });
         }
       }

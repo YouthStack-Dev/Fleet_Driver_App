@@ -5,11 +5,12 @@ import 'providers/location_provider.dart';
 import 'providers/booking_provider.dart';
 import 'services/firebase_service.dart';
 import 'screens/login_screen.dart';
-import 'screens/select_account_screen.dart';
+
 import 'screens/rides_screen.dart';
 import 'screens/schedules_screen.dart';
 import 'screens/profile_screen.dart';
 import 'screens/switch_account_screen.dart';
+import 'screens/vendor_select_screen.dart';
 import 'screens/location_test_screen.dart';
 import 'services/navigation_service.dart';
 
@@ -61,11 +62,12 @@ class MyApp extends StatelessWidget {
         home: const LoginScreen(),
         routes: {
           '/login': (context) => const LoginScreen(),
-          '/select-account': (context) => const SelectAccountScreen(),
+
           '/home': (context) => const RidesScreen(),
           '/schedules': (context) => const SchedulesScreen(),
           '/profile': (context) => const ProfileScreen(),
           '/switch-account': (context) => const SwitchAccountScreen(),
+          '/vendor-select': (context) => VendorSelectScreen(licenseNumber: ModalRoute.of(context)!.settings.arguments as String),
           '/location-test': (context) => const LocationTestScreen(),
         },
       ),

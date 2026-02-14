@@ -7,6 +7,9 @@ class ApiEndpoints {
   static const String newLogin = '/api/v1/auth/driver/new/login';
   static const String loginConfirm = '/api/v1/auth/driver/login/confirm';
   static const String switchCompany = '/api/v1/auth/driver/switch-company';
+  static const String deviceVerify = '/api/v1/auth/driver/device/verify';
+  static const String selectTenant = '/api/v1/auth/driver/select-tenant';
+  static const String driverRefresh = '/api/v1/auth/driver/refresh';
   static const String driverTrips = '/api/v1/driver/trips';
   
   // Duty Management

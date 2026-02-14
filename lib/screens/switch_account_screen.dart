@@ -49,7 +49,7 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
                   final isSelected = _selectedKey == key;
 
                   return GestureDetector(
-                    onTap: (isCurrent || _isLoading) ? null : () => _handleSwitch(context, account, key),
+                    onTap: _isLoading ? null : () => _handleSwitch(context, account, key, isCurrent),
                     child: Container(
                       margin: const EdgeInsets.only(bottom: 12),
                       padding: const EdgeInsets.all(16),
@@ -127,7 +127,18 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
     );
   }
 
-  Future<void> _handleSwitch(BuildContext itemContext, dynamic account, String key) async {
+  Future<void> _handleSwitch(BuildContext itemContext, dynamic account, String key, bool isCurrent) async {
+    if (isCurrent) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('You are currently active in ${account['vendor_name'] ?? 'this company'}'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
+
     setState(() {
       _isLoading = true;
       _selectedKey = key;

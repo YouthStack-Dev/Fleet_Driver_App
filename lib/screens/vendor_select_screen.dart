@@ -73,6 +73,8 @@ class _VendorSelectScreenState extends State<VendorSelectScreen> {
               itemCount: vendors.length,
               itemBuilder: (context, index) {
                 final vendor = vendors[index];
+                final isActive = vendor['device_active'] == true || vendor['device_active'] == 1;
+
                 return Card(
                   elevation: 2,
                   margin: const EdgeInsets.only(bottom: 12),
@@ -80,16 +82,33 @@ class _VendorSelectScreenState extends State<VendorSelectScreen> {
                   child: ListTile(
                     contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                     leading: CircleAvatar(
-                      backgroundColor: Colors.blue.shade50,
-                      child: const Icon(Icons.business, color: Colors.blue),
+                      backgroundColor: isActive ? Colors.green.shade50 : Colors.red.shade50,
+                      child: Icon(Icons.business, color: isActive ? Colors.green : Colors.red),
                     ),
                     title: Text(
                       vendor['vendor_name'] ?? 'Unknown Vendor',
                       style: GoogleFonts.poppins(fontWeight: FontWeight.w600),
                     ),
-                    subtitle: Text(
-                      vendor['tenant_name'] ?? 'Unknown Tenant',
-                      style: GoogleFonts.poppins(fontSize: 12),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          vendor['tenant_name'] ?? 'Unknown Tenant',
+                          style: GoogleFonts.poppins(fontSize: 12),
+                        ),
+                        const SizedBox(height: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: isActive ? Colors.green : Colors.red,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            isActive ? 'Active' : 'Inactive',
+                            style: GoogleFonts.poppins(fontSize: 10, color: Colors.white, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
                     ),
                     trailing: const Icon(Icons.arrow_forward_ios, size: 16),
                     onTap: () => _handleSelect(vendor),

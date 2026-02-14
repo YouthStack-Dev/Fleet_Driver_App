@@ -48,31 +48,35 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
                   final isCurrent = key == currentKey;
                   final isSelected = _selectedKey == key;
 
+                  final isActive = account['device_active'] == true || account['device_active'] == 1;
+
                   return GestureDetector(
-                    onTap: _isLoading ? null : () => _handleSwitch(context, account, key, isCurrent),
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        border: isCurrent 
-                            ? Border.all(color: Colors.green, width: 2) 
-                            : (isSelected ? Border.all(color: const Color(0xFF6C63FF), width: 2) : null),
-                        boxShadow: [
-                           BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))
-                        ]
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: isCurrent ? Colors.green.withOpacity(0.1) : const Color(0xFF6C63FF).withOpacity(0.1),
-                              shape: BoxShape.circle
+                    onTap: (_isLoading || !isActive) ? null : () => _handleSwitch(context, account, key, isCurrent),
+                    child: Opacity(
+                      opacity: isActive ? 1.0 : 0.6,
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: isCurrent 
+                              ? Border.all(color: Colors.green, width: 2) 
+                              : (isSelected ? Border.all(color: const Color(0xFF6C63FF), width: 2) : null),
+                          boxShadow: [
+                             BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))
+                          ]
+                        ),
+                        child: Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: isCurrent ? Colors.green.withOpacity(0.1) : (isActive ? const Color(0xFF6C63FF).withOpacity(0.1) : Colors.grey.withOpacity(0.1)),
+                                shape: BoxShape.circle
+                              ),
+                              child: Icon(Icons.business, color: isCurrent ? Colors.green : (isActive ? const Color(0xFF6C63FF) : Colors.grey)),
                             ),
-                            child: Icon(Icons.business, color: isCurrent ? Colors.green : const Color(0xFF6C63FF)),
-                          ),
                           const SizedBox(width: 16),
                           Expanded(
                             child: Column(
@@ -93,7 +97,40 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
                                   ],
                                 ),
                                 const SizedBox(height: 4),
-                                Text(tenantName, style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(tenantName, style: TextStyle(color: Colors.grey[600], fontSize: 13))
+                                    ),
+                                    // Status Badge
+                                    Container(
+                                      margin: const EdgeInsets.only(left: 8),
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: (account['device_active'] == true || account['device_active'] == 1) 
+                                            ? Colors.green.withOpacity(0.1) 
+                                            : Colors.red.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: (account['device_active'] == true || account['device_active'] == 1) 
+                                              ? Colors.green 
+                                              : Colors.red,
+                                          width: 0.5
+                                        )
+                                      ),
+                                      child: Text(
+                                        (account['device_active'] == true || account['device_active'] == 1) ? 'Active' : 'Inactive',
+                                        style: TextStyle(
+                                          color: (account['device_active'] == true || account['device_active'] == 1) 
+                                              ? Colors.green 
+                                              : Colors.red,
+                                          fontSize: 10, 
+                                          fontWeight: FontWeight.w600
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                                 const SizedBox(height: 2),
                                 Text('TID: $tenantId | VID: $vendorId', style: TextStyle(color: Colors.grey[400], fontSize: 11)),
                               ],
@@ -102,11 +139,12 @@ class _SwitchAccountScreenState extends State<SwitchAccountScreen> {
                           if (isSelected && _isLoading)
                             const Padding(padding: EdgeInsets.only(left: 10), child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)))
                           else if (!isCurrent)
-                            const Icon(Icons.chevron_right, color: Colors.grey)
+                            Icon(Icons.chevron_right, color: isActive ? Colors.grey : Colors.grey.withOpacity(0.5))
                         ],
                       ),
                     ),
-                  );
+                  ),
+                );
                 },
               ),
     );

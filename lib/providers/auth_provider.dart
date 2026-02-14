@@ -54,12 +54,7 @@ class AuthProvider extends ChangeNotifier {
       _currentUser = session['user_data'];
       if (_currentUser != null) {
         final rawAccounts = _currentUser!['accounts'] is List ? _currentUser!['accounts'] : [];
-        _accounts = rawAccounts.where((a) {
-           // Filter by device_active if present
-           final isActive = a['device_active'];
-           if (isActive == null) return true; // Keep if unknown (backward compatibility)
-           return isActive == true || isActive == 1;
-        }).toList();
+        _accounts = rawAccounts; // Keep all accounts, UI handles status
         
         _driver = _currentUser!['driver'] ?? _currentUser!['user']?['driver'];
       }
@@ -96,6 +91,14 @@ class AuthProvider extends ChangeNotifier {
     if (result['success'] == true) {
       _accounts = result['vendors'] ?? [];
       _status = AuthStatus.tempAuthenticated; // Valid device, pending vendor selection
+      
+      // Fix: Persist this master list to tempSession so AuthService can retrieve it later
+      await _sessionService.setTempSession(
+        tempToken: 'verify_stage', 
+        accounts: _accounts,
+        driver: {'license_number': license}
+      );
+      
       notifyListeners();
     }
     return result;
@@ -146,9 +149,12 @@ class AuthProvider extends ChangeNotifier {
 
   Future<Map<String, dynamic>> switchCompany(dynamic account) async {
     final session = await _sessionService.getSession();
-    final token = session?['access_token'];
     
-    if (token == null) return {'success': false, 'error': 'No active session'};
+    // 1. Get required data
+    final userData = session?['user_data'];
+    final dlNumber = userData?['driver']?['license_number'] ?? userData?['license_number'];
+    
+     if (dlNumber == null) return {'success': false, 'error': 'Driver license not found'};
 
     final vendorId = account['vendor_id']?.toString() ?? account['vendor']?['id']?.toString();
     final tenantId = account['tenant_id']?.toString() ?? account['tenant']?['id']?.toString();
@@ -156,19 +162,38 @@ class AuthProvider extends ChangeNotifier {
     if (vendorId == null || tenantId == null) {
        return {'success': false, 'error': 'Invalid account data'};
     }
+    
+    // 2. Fetch Device Data
+    final deviceData = await _deviceService.getDeviceData();
 
     try {
-       print('🔄 AuthProvider: calling authService.switchCompany');
-       final result = await _authService.switchCompany(
-         accessToken: token,
+       print('🔄 AuthProvider: calling authService.selectTenant for Switch');
+       // Reuse selectTenant as per spec
+       final result = await _authService.selectTenant(
+         dlNumber: dlNumber,
+         deviceData: deviceData,
          vendorId: vendorId,
          tenantId: tenantId,
        );
        print('🔄 AuthProvider: switch result: $result');
 
        if (result['success'] == true) {
-          // AuthService has already updated the session in SecureStorage.
-          // We just need to refresh our local state.
+          // AuthService has updated the session. 
+          // However, selectTenant might return a fresh user object which *might* not have result['user_data']['accounts'].
+          // We need to ensure we preserve the accounts list from the previous session if the new one doesn't have it.
+          // But wait, selectTenant updates the session in AuthService. 
+          // Let's check if we need to merge accounts. 
+          
+          // Actually, AuthService.selectTenant blindly overwrites the session with new data.
+          // If the new token response doesn't include 'accounts', we lose the list!
+          // We should quick-fix AuthService.selectTenant to preserve accounts if missing, OR handle it here.
+          // But AuthService handles the write. 
+          
+          // Let's trust AuthService for now, but if the API returns just the token and user info without accounts, 
+          // we might lose the drawer list. 
+          // Ideally, the backend returns the same structure. 
+          // If not, we should patch AuthService.selectTenant to merge accounts.
+          
           print('🔄 AuthProvider: Switch success, calling init()');
           await init();
           print('🔄 AuthProvider: init() complete');

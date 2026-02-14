@@ -14,9 +14,10 @@ class SessionService {
   SessionService._internal();
 
   /// Save final authenticated session
-  Future<void> setSession({required String accessToken, required Map<String, dynamic> userData}) async {
+  Future<void> setSession({required String accessToken, required Map<String, dynamic> userData, String? refreshToken}) async {
     final session = {
       'access_token': accessToken,
+      'refresh_token': refreshToken,
       'user_data': userData,
       'expiresAt': _extractExpiry(accessToken),
     };

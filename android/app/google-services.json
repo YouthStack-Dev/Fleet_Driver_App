@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "570547490090",
+    "firebase_url": "https://ets-1-ccb71-default-rtdb.firebaseio.com",
+    "project_id": "ets-1-ccb71",
+    "storage_bucket": "ets-1-ccb71.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:570547490090:android:d95a0c4def6593e4246253",
+        "android_client_info": {
+          "package_name": "com.mlt.etsdriver"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyClvrfGUYdqPYWAXroCgqMXrX3GFIh17mQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:570547490090:android:1630cdbcd20d6719246253",
+        "android_client_info": {
+          "package_name": "com.mltcorporate.employeeconnect"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyClvrfGUYdqPYWAXroCgqMXrX3GFIh17mQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

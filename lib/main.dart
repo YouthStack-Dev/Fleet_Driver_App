@@ -13,12 +13,17 @@ import 'screens/switch_account_screen.dart';
 import 'screens/vendor_select_screen.dart';
 import 'screens/location_test_screen.dart';
 import 'services/navigation_service.dart';
+import 'services/push_notification_service.dart';
+import 'package:page_transition/page_transition.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
   // Initialize Firebase (mock or real if configured)
   await FirebaseService().initialize();
+  
+  // Initialize Push Notifications (FCM + Local Notifications)
+  await PushNotificationService().initialize();
 
   runApp(const MyApp());
 }
@@ -60,15 +65,40 @@ class MyApp extends StatelessWidget {
           ),
         ),
         home: const LoginScreen(),
-        routes: {
-          '/login': (context) => const LoginScreen(),
-
-          '/home': (context) => const RidesScreen(),
-          '/schedules': (context) => const SchedulesScreen(),
-          '/profile': (context) => const ProfileScreen(),
-          '/switch-account': (context) => const SwitchAccountScreen(),
-          '/vendor-select': (context) => VendorSelectScreen(licenseNumber: ModalRoute.of(context)!.settings.arguments as String),
-          '/location-test': (context) => const LocationTestScreen(),
+        onGenerateRoute: (settings) {
+          Widget page;
+          switch (settings.name) {
+            case '/login':
+              page = const LoginScreen();
+              break;
+            case '/home':
+              page = const RidesScreen();
+              break;
+            case '/schedules':
+              page = const SchedulesScreen();
+              break;
+            case '/profile':
+              page = const ProfileScreen();
+              break;
+            case '/switch-account':
+              page = const SwitchAccountScreen();
+              break;
+            case '/vendor-select':
+              page = VendorSelectScreen(licenseNumber: settings.arguments as String);
+              break;
+            case '/location-test':
+              page = const LocationTestScreen();
+              break;
+            default:
+              page = const LoginScreen();
+          }
+          return PageTransition(
+            child: page,
+            type: PageTransitionType.fade, // Smooth fade for all global routes
+            settings: settings,
+            duration: const Duration(milliseconds: 300),
+            reverseDuration: const Duration(milliseconds: 300),
+          );
         },
       ),
     );

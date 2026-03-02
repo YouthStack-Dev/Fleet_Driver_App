@@ -6,6 +6,7 @@ import '../providers/booking_provider.dart';
 import '../providers/location_provider.dart';
 import '../widgets/app_drawer.dart';
 import '../services/permission_service.dart';
+import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
 
 class RidesScreen extends StatefulWidget {
   const RidesScreen({super.key});
@@ -100,13 +101,24 @@ class _RidesScreenState extends State<RidesScreen> {
                         ],
                       ),
                     )
-                  : ListView.builder(
-                      padding: const EdgeInsets.only(top: 100, left: 16, right: 16, bottom: 16),
-                      itemCount: provider.routes.length,
-                      itemBuilder: (context, index) {
-                        final route = provider.routes[index];
-                        return _buildRouteCard(route, provider);
-                      },
+                  : AnimationLimiter(
+                      child: ListView.builder(
+                        padding: const EdgeInsets.only(top: 100, left: 16, right: 16, bottom: 16),
+                        itemCount: provider.routes.length,
+                        itemBuilder: (context, index) {
+                          final route = provider.routes[index];
+                          return AnimationConfiguration.staggeredList(
+                            position: index,
+                            duration: const Duration(milliseconds: 400),
+                            child: SlideAnimation(
+                              verticalOffset: 50.0,
+                              child: FadeInAnimation(
+                                child: _buildRouteCard(route, provider),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
                     ),
     );
   }
@@ -337,64 +349,68 @@ class _RidesScreenState extends State<RidesScreen> {
              const SizedBox(height: 12),
 
              // Actions Row - Full Width Buttons
-             Column(
-               crossAxisAlignment: CrossAxisAlignment.stretch,
-               children: [
-                 if (lat != null && lng != null)
-                   ElevatedButton.icon(
-                      onPressed: () => _launchMaps(lat, lng, address),
-                      icon: const Icon(Icons.navigation, size: 16, color: Colors.white),
-                      label: Text('Navigate to ${isOnBoard ? 'Drop' : 'Pickup'}', style: const TextStyle(fontSize: 13, color: Colors.white)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.cyan[600], // Match Screenshot Blue/Cyan
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+             AnimatedSize(
+               duration: const Duration(milliseconds: 300),
+               curve: Curves.easeInOut,
+               child: Column(
+                 crossAxisAlignment: CrossAxisAlignment.stretch,
+                 children: [
+                   if (lat != null && lng != null)
+                     ElevatedButton.icon(
+                        onPressed: () => _launchMaps(lat, lng, address),
+                        icon: const Icon(Icons.navigation, size: 16, color: Colors.white),
+                        label: Text('Navigate to ${isOnBoard ? 'Drop' : 'Pickup'}', style: const TextStyle(fontSize: 13, color: Colors.white)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.cyan[600], // Match Screenshot Blue/Cyan
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                     ),
+                   
+                   const SizedBox(height: 8),
+                   
+                   if (showPickup) ...[
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () => _handlePickup(stop, route, provider),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF6C63FF), // Purple
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                              child: const Text('Start Pickup', style: TextStyle(fontSize: 13, color: Colors.white)),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () => _handleNoShow(stop, route, provider),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.grey[400], 
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              ),
+                               child: const Text('No Show', style: TextStyle(fontSize: 13, color: Colors.white)),
+                            ),
+                          ),
+                        ],
+                      )
+                   ],
+                   
+                   if (showDrop)
+                      ElevatedButton(
+                        onPressed: () => _handleDrop(stop, route, provider),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF6C63FF), // Purple
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        ),
+                         child: const Text('Drop Off', style: TextStyle(fontSize: 13, color: Colors.white)),
                       ),
-                   ),
-                 
-                 const SizedBox(height: 8),
-                 
-                 if (showPickup) ...[
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () => _handlePickup(stop, route, provider),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF6C63FF), // Purple
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: const Text('Start Pickup', style: TextStyle(fontSize: 13, color: Colors.white)),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () => _handleNoShow(stop, route, provider),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.grey[400], 
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                            ),
-                             child: const Text('No Show', style: TextStyle(fontSize: 13, color: Colors.white)),
-                          ),
-                        ),
-                      ],
-                    )
                  ],
-                 
-                 if (showDrop)
-                    ElevatedButton(
-                      onPressed: () => _handleDrop(stop, route, provider),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6C63FF), // Purple
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                       child: const Text('Drop Off', style: TextStyle(fontSize: 13, color: Colors.white)),
-                    ),
-               ],
+               ),
              )
           ]
         ],
@@ -403,10 +419,19 @@ class _RidesScreenState extends State<RidesScreen> {
   }
 
   Widget _buildBadge(String text, Color bg, Color fg) {
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(4)),
-      child: Text(text, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.bold)),
+      decoration: BoxDecoration(
+        color: bg, 
+        borderRadius: BorderRadius.circular(4)
+      ),
+      child: AnimatedDefaultTextStyle(
+        duration: const Duration(milliseconds: 300),
+        style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.bold),
+        child: Text(text),
+      ),
     );
   }
   
@@ -429,7 +454,7 @@ class _RidesScreenState extends State<RidesScreen> {
     if (success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Duty Started!')));
     } else if (mounted) {
-       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(provider.error ?? 'Failed')));
+       _showErrorDialog(provider.error ?? 'Failed');
     }
   }
 
@@ -459,7 +484,7 @@ class _RidesScreenState extends State<RidesScreen> {
            );
          } else {
            // Generic Error
-           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result['error'] ?? 'Failed to end duty')));
+           _showErrorDialog(result['error'] ?? 'Failed to end duty');
          }
        }
     }
@@ -479,7 +504,7 @@ class _RidesScreenState extends State<RidesScreen> {
     final pos = await locationProvider.getCurrentLocation();
     
     if (pos == null) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location not valid')));
+      if (mounted) _showErrorDialog('Location not valid');
       return;
     }
 
@@ -495,7 +520,7 @@ class _RidesScreenState extends State<RidesScreen> {
       if (result['errorCode'] == 'INVALID_BOARDING_OTP') {
         _showInvalidOtpDialog();
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result['error'] ?? 'Failed to start trip')));
+        _showErrorDialog(result['error'] ?? 'Failed to start trip');
       }
     }
   }
@@ -513,7 +538,7 @@ class _RidesScreenState extends State<RidesScreen> {
     final pos = await locationProvider.getCurrentLocation();
     
     if (pos == null) {
-       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Location not valid')));
+       if (mounted) _showErrorDialog('Location not valid');
        return;
     }
 
@@ -529,7 +554,7 @@ class _RidesScreenState extends State<RidesScreen> {
       if (result['errorCode'] == 'INVALID_DEBOARDING_OTP') {
         _showInvalidOtpDialog();
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result['error'] ?? 'Failed to drop trip')));
+        _showErrorDialog(result['error'] ?? 'Failed to drop trip');
       }
     }
   }
@@ -558,6 +583,19 @@ class _RidesScreenState extends State<RidesScreen> {
       builder: (c) => AlertDialog(
         title: const Text('Invalid OTP'),
         content: const Text('The OTP you entered is incorrect. Please try again.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text('OK')),
+        ],
+      )
+    );
+  }
+
+  Future<void> _showErrorDialog(String message) async {
+    return showDialog(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Action Failed', style: TextStyle(color: Colors.red)),
+        content: Text(message),
         actions: [
           TextButton(onPressed: () => Navigator.pop(c), child: const Text('OK')),
         ],
@@ -627,17 +665,13 @@ class _RidesScreenState extends State<RidesScreen> {
         await launchUrl(geoUrl, mode: LaunchMode.externalApplication);
       } else {
         if (mounted) {
-           ScaffoldMessenger.of(context).showSnackBar(
-             const SnackBar(content: Text('Could not open maps application')),
-           );
+           _showErrorDialog('Could not open maps application');
         }
       }
     } catch (e) {
       print('Error launching maps: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error launching maps: $e')),
-        );
+        _showErrorDialog('Error launching maps: $e');
       }
     }
   }

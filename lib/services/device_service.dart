@@ -3,7 +3,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:android_id/android_id.dart';
 import 'package:logger/logger.dart';
-
+import 'push_notification_service.dart';
 class DeviceService {
   final DeviceInfoPlugin _deviceInfo = DeviceInfoPlugin();
   final _androidIdPlugin = const AndroidId();
@@ -14,6 +14,8 @@ class DeviceService {
     String deviceModel = 'Unknown';
     String osVersion = 'Unknown';
     String appVersion = 'Unknown';
+
+    String? fcmToken;
 
     try {
       // 1. Get App Version
@@ -33,6 +35,10 @@ class DeviceService {
         deviceModel = '${iosInfo.name} ${iosInfo.model}';
         osVersion = '${iosInfo.systemName} ${iosInfo.systemVersion}';
       }
+
+      // 3. Get FCM Token
+      fcmToken = await PushNotificationService().getToken();
+      
     } catch (e) {
       _logger.e('Error getting device info: $e');
     }
@@ -42,6 +48,7 @@ class DeviceService {
       'device_model': deviceModel,
       'os_version': osVersion,
       'app_version': appVersion,
+      if (fcmToken != null) 'fcm_token': fcmToken,
     };
   }
 }

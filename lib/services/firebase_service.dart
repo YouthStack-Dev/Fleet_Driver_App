@@ -18,23 +18,15 @@ class FirebaseService {
 
   Future<void> initialize() async { 
     try {
-      // Initialize Firebase with manual options if usually missing google-services.json
-      // RN app uses only databaseURL, so we mirror this.
-      // We must provide dummy values for required fields on Android.
-      await Firebase.initializeApp(
-        options: const FirebaseOptions(
-            apiKey: "AIza-dummy-key-for-db-only", // Placeholder
-            appId: "1:000000000000:android:dummy", // Placeholder
-            messagingSenderId: "000000000000", // Placeholder
-            projectId: "ets-1-ccb71",
-            databaseURL: "https://ets-1-ccb71-default-rtdb.firebaseio.com",
-        ),
-      ); 
+      // Initialize Firebase without manual options. 
+      // This forces the use of google-services.json (Android) or GoogleService-Info.plist (iOS).
+      // Required for Firebase Cloud Messaging.
+      await Firebase.initializeApp(); 
       _dbRef = FirebaseDatabase.instance.ref();
       _isSdkAvailable = true;
-      _logger.i('✅ Firebase SDK initialized with manual options');
+      _logger.i('✅ Firebase SDK initialized successfully from config files');
     } catch (e) {
-       // If manually init fails (e.g. duplicate app), check if already exists
+       // If init fails
        if (Firebase.apps.isNotEmpty) {
            _dbRef = FirebaseDatabase.instance.ref();
            _isSdkAvailable = true;

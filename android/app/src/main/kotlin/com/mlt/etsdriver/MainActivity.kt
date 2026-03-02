@@ -1,4 +1,4 @@
-package com.example.driver_app_flutter
+package com.mlt.etsdriver
 
 import io.flutter.embedding.android.FlutterActivity
 

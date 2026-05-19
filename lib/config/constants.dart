@@ -1,12 +1,9 @@
 class AppConstants {
-  static const String baseUrl = 'https://api.gocab.tech';
+  static const String baseUrl = 'https://api.mltcorporate.com';
 }
 
 class ApiEndpoints {
-  static const String login = '/api/v1/auth/driver/login';
-  static const String newLogin = '/api/v1/auth/driver/new/login';
-  static const String loginConfirm = '/api/v1/auth/driver/login/confirm';
-  static const String switchCompany = '/api/v1/auth/driver/switch-company';
+  // Auth - Driver (2-step: device verify → select tenant)
   static const String deviceVerify = '/api/v1/auth/driver/device/verify';
   static const String selectTenant = '/api/v1/auth/driver/select-tenant';
   static const String driverRefresh = '/api/v1/auth/driver/refresh';
@@ -28,6 +25,10 @@ class ApiEndpoints {
   static const String shifts = '/api/v1/shifts';
   static const String createBooking = '/api/v1/bookings';
   static const String cancelBooking = '/api/v1/bookings/cancel';
+
+  // Driver Config & Speed Monitoring
+  static const String driverConfig = '/api/v1/driver/config';
+  static const String speedViolation = '/api/v1/speed-violations/';
 }
 
 class FirebaseConfig {
@@ -35,6 +36,13 @@ class FirebaseConfig {
 }
 
 class LocationConfig {
-  static const int updateIntervalMs = 30000;
-  static const int distanceFilterMeters = 10;
+  /// How often the GPS stream ticks — 1 s for live speed display on screen.
+  static const int updateIntervalMs = 1000;
+
+  /// Minimum movement before a GPS event fires (0 = always fire on interval).
+  static const int distanceFilterMeters = 0;
+
+  /// How often the driver location is written to Firebase RTDB.
+  /// Kept at 30 s to avoid hammering the database.
+  static const int firebaseUpdateIntervalMs = 30000;
 }

@@ -5,6 +5,7 @@ import '../services/auth_service.dart';
 import '../services/session_service.dart';
 import '../services/location_service.dart';
 import '../services/device_service.dart';
+import '../services/driver_config_service.dart';
 
 enum AuthStatus { unknown, unauthenticated, tempAuthenticated, authenticated }
 
@@ -64,7 +65,10 @@ class AuthProvider extends ChangeNotifier {
       
       // Auto-start tracking on session restore
       print('🚀 AuthProvider: Restoring session, starting location tracking...');
-      LocationService().startTracking(); 
+      LocationService().startTracking();
+      
+      // Refresh driver config in background (speed limit, OTP flags, etc.)
+      DriverConfigService().fetchConfig(); 
     } else {
       // Check for temp session
       final tempSession = await _sessionService.getTempSession();
@@ -140,7 +144,12 @@ class AuthProvider extends ChangeNotifier {
       _status = AuthStatus.authenticated;
       
       print('🚀 AuthProvider: Tenant selected, starting location tracking...');
+      // Stop first in case init() already started a stale stream, then restart fresh.
+      await LocationService().stopTracking();
       LocationService().startTracking();
+      
+      // Fetch driver config (speed limit, OTP flags) now that we have a token
+      DriverConfigService().fetchConfig();
       
       notifyListeners();
     }

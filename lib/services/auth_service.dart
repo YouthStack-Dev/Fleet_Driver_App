@@ -91,7 +91,7 @@ class AuthService {
       final payload = {
         'dl_number': dlNumber,
         'android_id': deviceData['android_id'],
-        'vendor_id': vendorId,
+        'vendor_id': int.tryParse(vendorId) ?? vendorId,
         'tenant_id': tenantId,
       };
 

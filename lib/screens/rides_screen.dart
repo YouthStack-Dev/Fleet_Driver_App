@@ -71,55 +71,80 @@ class _RidesScreenState extends State<RidesScreen> {
         ],
       ),
       drawer: const AppDrawer(),
-      body: provider.isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : (provider.error != null && provider.routes.isEmpty)
-              ? Center(child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text('Error: ${provider.error}', style: const TextStyle(color: Colors.red)),
-                    ElevatedButton(onPressed: _fetchRoutes, child: const Text('Retry'))
-                  ],
-                ))
-              : provider.routes.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.calendar_today, size: 64, color: Colors.grey[400]),
-                          const SizedBox(height: 16),
-                          const Text('No upcoming schedules', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey)),
-                          const SizedBox(height: 8),
-                          const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 40),
-                            child: Text(
-                              'Your assigned routes for today will appear here',
-                              style: TextStyle(color: Colors.grey),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : AnimationLimiter(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.only(top: 100, left: 16, right: 16, bottom: 16),
-                        itemCount: provider.routes.length,
-                        itemBuilder: (context, index) {
-                          final route = provider.routes[index];
-                          return AnimationConfiguration.staggeredList(
-                            position: index,
-                            duration: const Duration(milliseconds: 400),
-                            child: SlideAnimation(
-                              verticalOffset: 50.0,
-                              child: FadeInAnimation(
-                                child: _buildRouteCard(route, provider),
+      body: Consumer<LocationProvider>(
+        builder: (context, locationProvider, _) {
+          final Widget mainContent = provider.isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : (provider.error != null && provider.routes.isEmpty)
+                  ? Center(child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text('Error: ${provider.error}', style: const TextStyle(color: Colors.red)),
+                        ElevatedButton(onPressed: _fetchRoutes, child: const Text('Retry'))
+                      ],
+                    ))
+                  : provider.routes.isEmpty
+                      ? Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.calendar_today, size: 64, color: Colors.grey[400]),
+                              const SizedBox(height: 16),
+                              const Text('No upcoming schedules', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.grey)),
+                              const SizedBox(height: 8),
+                              const Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 40),
+                                child: Text(
+                                  'Your assigned routes for today will appear here',
+                                  style: TextStyle(color: Colors.grey),
+                                  textAlign: TextAlign.center,
+                                ),
                               ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
+                            ],
+                          ),
+                        )
+                      : AnimationLimiter(
+                          child: ListView.builder(
+                            padding: const EdgeInsets.only(top: 100, left: 16, right: 16, bottom: 100),
+                            itemCount: provider.routes.length,
+                            itemBuilder: (context, index) {
+                              final route = provider.routes[index];
+                              return AnimationConfiguration.staggeredList(
+                                position: index,
+                                duration: const Duration(milliseconds: 400),
+                                child: SlideAnimation(
+                                  verticalOffset: 50.0,
+                                  child: FadeInAnimation(
+                                    child: _buildRouteCard(route, provider),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        );
+
+          return Stack(
+            children: [
+              mainContent,
+              // Speed-limit violation banner — shown at the top when over the limit
+              if (locationProvider.isTracking && locationProvider.isSpeedLimitExceeded)
+                Positioned(
+                  top: 90,
+                  left: 16,
+                  right: 16,
+                  child: _buildSpeedAlert(locationProvider),
+                ),
+              // Live speed HUD — always shown while tracking, bottom-right corner
+              if (locationProvider.isTracking)
+                Positioned(
+                  bottom: 24,
+                  right: 16,
+                  child: _buildSpeedHud(locationProvider),
+                ),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -452,6 +477,8 @@ class _RidesScreenState extends State<RidesScreen> {
   Future<void> _handleStartDuty(String routeId, BookingProvider provider) async {
     final success = await provider.startDuty(routeId);
     if (success && mounted) {
+      // Activate speed-violation monitoring for this route
+      Provider.of<LocationProvider>(context, listen: false).setActiveRoute(routeId);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Duty Started!')));
     } else if (mounted) {
        _showErrorDialog(provider.error ?? 'Failed');
@@ -463,6 +490,8 @@ class _RidesScreenState extends State<RidesScreen> {
     
     if (result['success'] == true) {
       if (mounted) {
+        // Deactivate speed-violation monitoring
+        Provider.of<LocationProvider>(context, listen: false).setActiveRoute(null);
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Duty Ended!')));
       }
     } else {
@@ -704,5 +733,97 @@ class _RidesScreenState extends State<RidesScreen> {
     } catch (_) {
       return timeStr; // Fallback to raw string
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Speed HUD widgets
+  // ---------------------------------------------------------------------------
+
+  /// Compact circular speedometer in the bottom-right corner.
+  Widget _buildSpeedHud(LocationProvider locationProvider) {
+    final speed = locationProvider.currentSpeedKmh;
+    final limit = locationProvider.speedLimitKmh;
+    final exceeded = locationProvider.isSpeedLimitExceeded;
+
+    // Colour: green < 90% limit, orange 90–100%, red > limit
+    Color hudColor;
+    if (exceeded) {
+      hudColor = Colors.red;
+    } else if (speed >= limit * 0.9) {
+      hudColor = Colors.orange;
+    } else {
+      hudColor = Colors.green;
+    }
+
+    return Container(
+      width: 72,
+      height: 72,
+      decoration: BoxDecoration(
+        color: hudColor,
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: hudColor.withOpacity(0.5),
+            blurRadius: 12,
+            spreadRadius: 2,
+          )
+        ],
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            speed.toStringAsFixed(0),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              height: 1.1,
+            ),
+          ),
+          const Text(
+            'km/h',
+            style: TextStyle(
+              color: Colors.white70,
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Red alert banner shown across the top when the speed limit is exceeded.
+  Widget _buildSpeedAlert(LocationProvider locationProvider) {
+    return Material(
+      elevation: 4,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: Colors.red[700],
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.speed, color: Colors.white, size: 22),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Speed limit exceeded! '
+                '${locationProvider.currentSpeedKmh.toStringAsFixed(0)} kmph '
+                '(limit: ${locationProvider.speedLimitKmh.toStringAsFixed(0)} kmph)',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

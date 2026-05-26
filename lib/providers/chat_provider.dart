@@ -115,8 +115,9 @@ class ChatProvider extends ChangeNotifier {
       if (result['success'] == true) {
         final data = _asMap(result['data']);
         final rawList = data['messages'] as List? ?? [];
+        // Normalise every REST message so _ts and created_at are always set.
         final restMessages =
-            rawList.map((m) => _asMap(m)).toList();
+            rawList.map((m) => _normalizeMsg(_asMap(m))).toList();
 
         // Build a set of keys returned by REST.
         final restKeys = <String>{};
@@ -134,11 +135,9 @@ class ChatProvider extends ChangeNotifier {
 
         // Merge REST history with any Firebase-only messages and sort by time.
         _messages = [...restMessages, ...firebaseOnly];
-        _messages.sort((a, b) {
-          final da = (a['created_at'] as String?) ?? '';
-          final db = (b['created_at'] as String?) ?? '';
-          return da.compareTo(db);
-        });
+        // Sort by _ts (int, ms epoch) — timezone-free and unambiguous.
+        _messages.sort((a, b) =>
+            ((a['_ts'] as int?) ?? 0).compareTo((b['_ts'] as int?) ?? 0));
 
         // Rebuild known-keys from the merged list.
         _knownKeys.clear();
@@ -149,16 +148,10 @@ class ChatProvider extends ChangeNotifier {
         }
 
         // Record the latest timestamp so listenToFirebase can use startAfter.
-        _lastRestTimestamp = 0;
-        for (final msg in _messages) {
-          final tsStr = msg['created_at'] as String?;
-          if (tsStr != null && tsStr.isNotEmpty) {
-            try {
-              final ms = DateTime.parse(tsStr).millisecondsSinceEpoch;
-              if (ms > _lastRestTimestamp) _lastRestTimestamp = ms;
-            } catch (_) {}
-          }
-        }
+        // After the sort the last element is guaranteed to be the newest.
+        _lastRestTimestamp = _messages.isNotEmpty
+            ? ((_messages.last['_ts'] as int?) ?? 0)
+            : 0;
 
         // The REST /messages response also returns the session object.
         if (data['session'] != null) {
@@ -182,7 +175,12 @@ class ChatProvider extends ChangeNotifier {
     try {
       final result = await _chatService.sendMessage(bookingId, text);
       if (result['success'] == true) {
-        final msg = _asMap(result['data']);
+        // Normalise before adding so _ts and created_at are always set.
+        // Without this, if the POST response returns only 'timestamp' (int)
+        // and no 'created_at', the message gets created_at = null, which
+        // sorts to position 0 on the very next childAdded-triggered sort —
+        // making the driver's sent message appear to "disappear" to the top.
+        final msg = _normalizeMsg(_asMap(result['data']));
         // Add to list immediately (optimistic) if not already present.
         _addIfNew(msg);
         return true;
@@ -315,11 +313,9 @@ class ChatProvider extends ChangeNotifier {
         _messages.add(msg);
         // Re-sort after every insert so late-arriving messages (network jitter)
         // don't appear out of chronological order in the UI.
-        _messages.sort((a, b) {
-          final da = (a['created_at'] as String?) ?? '';
-          final db = (b['created_at'] as String?) ?? '';
-          return da.compareTo(db);
-        });
+        // Uses _ts (int ms epoch) — unambiguous regardless of timezone.
+        _messages.sort((a, b) =>
+            ((a['_ts'] as int?) ?? 0).compareTo((b['_ts'] as int?) ?? 0));
         notifyListeners();
       },
       onError: (e) {
@@ -422,15 +418,22 @@ class ChatProvider extends ChangeNotifier {
 
   /// Converts a Firebase RTDB snapshot value into a normalised message map
   /// that matches the shape returned by the REST API.
+  ///
+  /// Uses UTC for [created_at] and exposes [_ts] (int ms epoch) so that
+  /// the sort comparator works correctly regardless of device timezone.
+  /// Previously used [DateTime.fromMillisecondsSinceEpoch] without [isUtc],
+  /// which produced local-time ISO strings — string comparison then gave
+  /// wrong chronological order in UTC− timezones.
   Map<String, dynamic>? _firebaseSnapshotToMessage(
       String key, Object? value) {
     if (value is! Map) return null;
     final data = Map<String, dynamic>.from(value);
 
-    final ts = data['timestamp'];
-    final createdAt = ts is int
-        ? DateTime.fromMillisecondsSinceEpoch(ts).toIso8601String()
-        : DateTime.now().toIso8601String();
+    final tsRaw = data['timestamp'];
+    final tsMs = tsRaw is int ? tsRaw : DateTime.now().millisecondsSinceEpoch;
+    // Always UTC so ISO string comparison with REST created_at is consistent.
+    final createdAt =
+        DateTime.fromMillisecondsSinceEpoch(tsMs, isUtc: true).toIso8601String();
 
     return {
       'firebase_message_id': key,
@@ -444,8 +447,48 @@ class ChatProvider extends ChangeNotifier {
           '',
       'is_system_message': data['is_system'] == true,
       'created_at': createdAt,
+      '_ts': tsMs,
       'id': null,
     };
+  }
+
+  /// Normalises any message map (REST or RTDB) so it always carries:
+  ///   • `_ts`        — int, milliseconds since epoch — used for sorting.
+  ///   • `created_at` — UTC ISO-8601 string — used for timestamp display.
+  ///
+  /// This fixes two root causes:
+  ///   1. REST sendMessage response may return `timestamp` (int) with no
+  ///      `created_at` field → the driver's optimistically-added message
+  ///      gets `created_at = null` → sorts to position 0 on the next
+  ///      childAdded-triggered sort → looks like the message "disappeared".
+  ///   2. REST getMessages responses may use UTC ISO while RTDB-derived
+  ///      messages used local-time ISO → string comparison gave wrong order
+  ///      in UTC− timezones.
+  static Map<String, dynamic> _normalizeMsg(Map<String, dynamic> raw) {
+    // Resolve _ts: prefer explicit '_ts' or 'timestamp' int, then parse
+    // 'created_at' string.
+    int ts = 0;
+    final rawTs = raw['_ts'] ?? raw['timestamp'];
+    if (rawTs is int) {
+      ts = rawTs;
+    } else {
+      final ca = raw['created_at'] as String?;
+      if (ca != null && ca.isNotEmpty) {
+        try {
+          ts = DateTime.parse(ca).millisecondsSinceEpoch;
+        } catch (_) {}
+      }
+    }
+    if (ts == 0) ts = DateTime.now().millisecondsSinceEpoch;
+
+    // Keep the existing created_at if already set (REST returns UTC strings);
+    // otherwise generate one from ts.
+    final existing = raw['created_at'] as String?;
+    final createdAt = (existing != null && existing.isNotEmpty)
+        ? existing
+        : DateTime.fromMillisecondsSinceEpoch(ts, isUtc: true).toIso8601String();
+
+    return {...raw, '_ts': ts, 'created_at': createdAt};
   }
 
   static Map<String, dynamic> _asMap(dynamic raw) =>

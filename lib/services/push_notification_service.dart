@@ -214,13 +214,17 @@ class PushNotificationService {
     final notification = message.notification;
     final android = message.notification?.android;
 
-    // Encode booking_id / passenger_name so _onNotificationTap can navigate
-    // to the correct chat screen.
+    // Encode routing fields so _onNotificationTap can navigate to the correct
+    // chat screen and attach the RTDB listener without a REST round-trip.
     final payloadMap = <String, dynamic>{};
-    final bookingId = message.data['booking_id'];
+    final bookingId    = message.data['booking_id'];
     final passengerName = message.data['passenger_name'];
-    if (bookingId != null) payloadMap['booking_id'] = bookingId;
+    final firebasePath = message.data['firebase_path']; // added in latest FCM payload
+    final tenantId     = message.data['tenant_id'];     // added in latest FCM payload
+    if (bookingId    != null) payloadMap['booking_id']    = bookingId;
     if (passengerName != null) payloadMap['passenger_name'] = passengerName;
+    if (firebasePath != null) payloadMap['firebase_path']  = firebasePath;
+    if (tenantId     != null) payloadMap['tenant_id']      = tenantId;
     final payload = payloadMap.isNotEmpty ? jsonEncode(payloadMap) : null;
 
     if (notification != null && android != null && Platform.isAndroid) {
@@ -283,13 +287,19 @@ class PushNotificationService {
     if (bookingId == null) return;
 
     final passengerName = data['passenger_name'] as String?;
+    // Forward the FCM-provided firebase_path so ChatScreen can attach the
+    // RTDB listener immediately, without waiting for the REST session call.
+    final firebasePath  = data['firebase_path']  as String?;
+    final tenantId      = data['tenant_id']       as String?;
 
-    _logger.i('Navigating to /chat for booking $bookingId');
+    _logger.i('Navigating to /chat for booking $bookingId (path: $firebasePath)');
     NavigationService.navigatorKey.currentState?.pushNamed(
       '/chat',
       arguments: {
-        'booking_id': bookingId,
+        'booking_id':    bookingId,
         'passenger_name': passengerName,
+        'firebase_path':  firebasePath,
+        'tenant_id':      tenantId,
       },
     );
   }

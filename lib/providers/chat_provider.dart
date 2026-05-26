@@ -56,10 +56,24 @@ class ChatProvider extends ChangeNotifier {
   StreamSubscription<DatabaseEvent>? _childAddedSub;
   StreamSubscription<DatabaseEvent>? _childChangedSub;
 
+  /// Set to true when the RTDB subscription receives an error event.
+  /// Forces a full re-subscription on the next [listenToFirebase] call even
+  /// when the path hasn't changed — the most common cause is a Firebase
+  /// security-rule denial or a stale connection that needs to be reset.
+  bool _listenerHadError = false;
+
   /// Push-keys of messages already in [_messages], used for deduplication.
   /// The REST response returns each message's Firebase push-key as
   /// [firebase_message_id], so both sources share the same key space.
   final Set<String> _knownKeys = {};
+
+  /// The millisecond-epoch timestamp of the most recent message returned by
+  /// the last [loadMessages] call.  Passed to [listenToFirebase] as
+  /// [startAfterTimestamp] so the RTDB query only delivers messages that are
+  /// genuinely newer than the REST history — avoids re-delivering all 79+
+  /// existing messages as [childAdded] events on every subscription.
+  int _lastRestTimestamp = 0;
+  int get lastRestTimestamp => _lastRestTimestamp;
 
   // ---------------------------------------------------------------------------
   // Session
@@ -132,6 +146,18 @@ class ChatProvider extends ChangeNotifier {
         for (final msg in firebaseOnly) {
           final key = msg['firebase_message_id'] as String?;
           if (key != null && key.isNotEmpty) _knownKeys.add(key);
+        }
+
+        // Record the latest timestamp so listenToFirebase can use startAfter.
+        _lastRestTimestamp = 0;
+        for (final msg in _messages) {
+          final tsStr = msg['created_at'] as String?;
+          if (tsStr != null && tsStr.isNotEmpty) {
+            try {
+              final ms = DateTime.parse(tsStr).millisecondsSinceEpoch;
+              if (ms > _lastRestTimestamp) _lastRestTimestamp = ms;
+            } catch (_) {}
+          }
         }
 
         // The REST /messages response also returns the session object.
@@ -224,30 +250,57 @@ class ChatProvider extends ChangeNotifier {
   /// • [childAdded]   → new messages arrive without polling.
   /// • [childChanged] → translation patches update [translated_text] in-place.
   ///
+  /// [startAfterTimestamp] — millisecond-epoch timestamp (from
+  /// [lastRestTimestamp]) used to tell Firebase to only deliver children with
+  /// `timestamp > startAfterTimestamp`.  Eliminates duplicate delivery of the
+  /// 79+ messages already loaded from REST on every fresh subscription.
+  /// Pass 0 (default) to receive all children (used when there are no REST
+  /// messages yet).
+  ///
   /// Call this AFTER [loadMessages] so [_knownKeys] is populated and
   /// existing messages are not duplicated.
-  void listenToFirebase(String firebasePath) {
-    // Idempotency: skip if already listening to this exact path.
-    if (_currentFirebasePath == firebasePath &&
+  void listenToFirebase(String firebasePath, {int startAfterTimestamp = 0}) {
+    // Idempotency: skip if already listening to this exact path AND the
+    // previous subscription had no errors.  If an error was received we must
+    // force a re-subscription (the stream is broken and won't recover).
+    if (!_listenerHadError &&
+        _currentFirebasePath == firebasePath &&
         _childAddedSub != null &&
         _childChangedSub != null) {
       return;
     }
 
-    // Cancel any prior subscription (e.g. switching bookings).
+    // Cancel any prior subscription (e.g. switching bookings or forced retry).
     cancelFirebaseListener();
     _currentFirebasePath = firebasePath;
+    _listenerHadError = false; // reset — fresh subscription
 
-    DatabaseReference ref;
+    // Use orderByChild('timestamp') so Firebase delivers children in
+    // chronological order and respects any ".indexOn": ["timestamp"] security
+    // rule.  Without this query modifier, RTDB often fails to push new child
+    // events in real-time on Android (the driver would only see new messages
+    // after a manual refresh).
+    //
+    // When startAfterTimestamp > 0 (the common case after loadMessages), apply
+    // startAfter so the RTDB query only delivers messages that are genuinely
+    // newer than the REST history.  This eliminates the duplicate-delivery
+    // problem: without it, Firebase would fire childAdded for every existing
+    // message in the node on every new subscription.
+    Query query;
     try {
-      ref = FirebaseDatabase.instance.ref(firebasePath);
+      final ref = FirebaseDatabase.instance
+          .ref(firebasePath)
+          .orderByChild('timestamp');
+      query = startAfterTimestamp > 0
+          ? ref.startAfter(startAfterTimestamp)
+          : ref;
     } catch (e) {
       debugPrint('ChatProvider: Firebase ref error: $e');
       return;
     }
 
     // --- childAdded ---
-    _childAddedSub = ref.onChildAdded.listen(
+    _childAddedSub = query.onChildAdded.listen(
       (event) {
         final key = event.snapshot.key;
         if (key == null) return;
@@ -260,14 +313,27 @@ class ChatProvider extends ChangeNotifier {
 
         _knownKeys.add(key);
         _messages.add(msg);
+        // Re-sort after every insert so late-arriving messages (network jitter)
+        // don't appear out of chronological order in the UI.
+        _messages.sort((a, b) {
+          final da = (a['created_at'] as String?) ?? '';
+          final db = (b['created_at'] as String?) ?? '';
+          return da.compareTo(db);
+        });
         notifyListeners();
       },
-      onError: (e) =>
-          debugPrint('ChatProvider: childAdded error: $e'),
+      onError: (e) {
+        debugPrint('ChatProvider: childAdded error: $e');
+        // Mark the subscription as broken.  The next listenToFirebase() call
+        // (triggered when the driver re-opens the chat screen) will force a
+        // full re-subscription instead of returning early from the
+        // idempotency check.
+        _listenerHadError = true;
+      },
     );
 
     // --- childChanged (translation patches) ---
-    _childChangedSub = ref.onChildChanged.listen(
+    _childChangedSub = query.onChildChanged.listen(
       (event) {
         final key = event.snapshot.key;
         if (key == null) return;
@@ -290,8 +356,10 @@ class ChatProvider extends ChangeNotifier {
           }
         }
       },
-      onError: (e) =>
-          debugPrint('ChatProvider: childChanged error: $e'),
+      onError: (e) {
+        debugPrint('ChatProvider: childChanged error: $e');
+        _listenerHadError = true;
+      },
     );
   }
 
@@ -301,6 +369,7 @@ class ChatProvider extends ChangeNotifier {
     _childChangedSub?.cancel();
     _childChangedSub = null;
     _currentFirebasePath = null;
+    _listenerHadError = false;
   }
 
   // ---------------------------------------------------------------------------
@@ -320,6 +389,7 @@ class ChatProvider extends ChangeNotifier {
     _isLoading = false;
     _isSending = false;
     _knownKeys.clear();
+    _lastRestTimestamp = 0;
     _currentBookingId = null;
     notifyListeners();
   }

@@ -106,6 +106,7 @@ class MyApp extends StatelessWidget {
               page = ChatScreen(
                 bookingId: args['booking_id'] as int,
                 passengerName: args['passenger_name'] as String?,
+                firebasePath: args['firebase_path'] as String?,
               );
               break;
             default:

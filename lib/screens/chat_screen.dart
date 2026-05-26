@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../services/navigation_service.dart';
 
@@ -18,10 +19,19 @@ class ChatScreen extends StatefulWidget {
   /// Display name shown in the AppBar (the employee / passenger's name).
   final String? passengerName;
 
+  /// RTDB path supplied directly by the FCM payload
+  /// (e.g. "chats/HS001/booking_418/messages").
+  /// When present this is used as the primary listener path so the app can
+  /// attach to Firebase immediately without waiting for the REST session call
+  /// to return — important on slow connections or when the session endpoint
+  /// is slightly delayed.
+  final String? firebasePath;
+
   const ChatScreen({
     super.key,
     required this.bookingId,
     this.passengerName,
+    this.firebasePath,
   });
 
   @override
@@ -52,10 +62,15 @@ class _ChatScreenState extends State<ChatScreen> {
   // ---------------------------------------------------------------------------
 
   Future<void> _initChat() async {
-    // If the provider already has state for this booking (e.g. the driver
-    // pressed back and then reopened the same chat), skip the full reset and
-    // just refresh the REST history.  The Firebase listener stays alive so
-    // messages received while the screen was closed are already in _messages.
+    // -----------------------------------------------------------------------
+    // IMPORTANT: Do NOT call listenToFirebase() here early.
+    // For a new booking the listener would be immediately cancelled by the
+    // clearChat() call below, and _knownKeys would be empty causing all
+    // existing RTDB children to be re-added as duplicates.
+    // The listener is always attached at the END of this method, after
+    // loadMessages() has fully populated _knownKeys.
+    // -----------------------------------------------------------------------
+
     final isSameBooking = _chatProvider.currentBookingId == widget.bookingId &&
         _chatProvider.session != null;
 
@@ -87,16 +102,48 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (!mounted) return;
 
-    // Attach Firebase listener AFTER loading history so _knownKeys is
-    // populated.  Idempotent — calling again with the same path is a no-op,
-    // so the listener is never needlessly cancelled and re-created.
-    final firebasePath =
-        _chatProvider.session?['firebase_path'] as String?;
-    if (firebasePath != null && firebasePath.isNotEmpty) {
-      _chatProvider.listenToFirebase(firebasePath);
+    // Resolve and attach the RTDB listener.
+    // _resolveFirebasePath() guarantees a non-null path via 3-level fallback,
+    // so the listener is ALWAYS attached regardless of what the backend returns.
+    final path = _resolveFirebasePath();
+    if (path != null) {
+      _chatProvider.listenToFirebase(
+        path,
+        startAfterTimestamp: _chatProvider.lastRestTimestamp,
+      );
     }
 
     _scrollToBottom(animated: false);
+  }
+
+  /// Resolves the Firebase RTDB path for this booking's messages node.
+  ///
+  /// Tries each source in priority order:
+  ///   1. [widget.firebasePath]  — supplied directly by the FCM payload when
+  ///      the driver opens the chat via a notification tap.  Always correct.
+  ///   2. `session['firebase_path']` — returned by the REST session endpoint.
+  ///   3. Constructed locally as `chats/{tenantId}/booking_{bookingId}/messages`
+  ///      — a guaranteed fallback that works even when the backend does not
+  ///      return `firebase_path` in the session response.  Matches the exact
+  ///      path format confirmed by the backend team.
+  String? _resolveFirebasePath() {
+    // 1. FCM-provided path (most reliable — backend sets it explicitly).
+    if (widget.firebasePath?.isNotEmpty == true) return widget.firebasePath;
+
+    // 2. Session path returned by REST.
+    final sessionPath =
+        _chatProvider.session?['firebase_path'] as String?;
+    if (sessionPath?.isNotEmpty == true) return sessionPath;
+
+    // 3. Construct from tenantId + bookingId.
+    //    Backend-confirmed format: chats/{tenantId}/booking_{bookingId}/messages
+    final tenantId =
+        Provider.of<AuthProvider>(context, listen: false).tenantId;
+    if (tenantId.isNotEmpty && tenantId != 'N/A') {
+      return 'chats/$tenantId/booking_${widget.bookingId}/messages';
+    }
+
+    return null;
   }
 
   void _onProviderUpdate() {

@@ -29,6 +29,30 @@ class ApiEndpoints {
   // Driver Config & Speed Monitoring
   static const String driverConfig = '/api/v1/driver/config';
   static const String speedViolation = '/api/v1/speed-violations/';
+
+  // Chat — Driver endpoints
+  /// GET  /api/v1/driver/chat/{booking_id}          → open / retrieve session
+  /// POST /api/v1/driver/chat/{booking_id}/send     → send message
+  /// GET  /api/v1/driver/chat/{booking_id}/messages → paginated history
+  /// POST /api/v1/driver/chat/{booking_id}/language → set language
+  static String driverChatSession(int bookingId) =>
+      '/api/v1/driver/chat/$bookingId';
+  static String driverChatSend(int bookingId) =>
+      '/api/v1/driver/chat/$bookingId/send';
+  static String driverChatMessages(int bookingId) =>
+      '/api/v1/driver/chat/$bookingId/messages';
+  static String driverChatLanguage(int bookingId) =>
+      '/api/v1/driver/chat/$bookingId/language';
+
+  // Chat — public utility
+  static const String chatSupportedLanguages =
+      '/api/v1/chat/supported-languages';
+
+  // Push notifications
+  /// POST — register / update the driver's FCM token with the backend.
+  /// Must be called after every login and whenever Firebase rotates the token.
+  static const String fcmTokenRegister =
+      '/api/v1/push-notifications/register-token';
 }
 
 class FirebaseConfig {

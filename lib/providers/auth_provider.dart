@@ -6,6 +6,7 @@ import '../services/session_service.dart';
 import '../services/location_service.dart';
 import '../services/device_service.dart';
 import '../services/driver_config_service.dart';
+import '../services/push_notification_service.dart';
 
 enum AuthStatus { unknown, unauthenticated, tempAuthenticated, authenticated }
 
@@ -68,7 +69,11 @@ class AuthProvider extends ChangeNotifier {
       LocationService().startTracking();
       
       // Refresh driver config in background (speed limit, OTP flags, etc.)
-      DriverConfigService().fetchConfig(); 
+      DriverConfigService().fetchConfig();
+
+      // Re-register the FCM token so the backend always has a valid token.
+      // Fire-and-forget — non-critical, failures are logged inside the service.
+      PushNotificationService().registerWithBackend();
     } else {
       // Check for temp session
       final tempSession = await _sessionService.getTempSession();
@@ -150,6 +155,9 @@ class AuthProvider extends ChangeNotifier {
       
       // Fetch driver config (speed limit, OTP flags) now that we have a token
       DriverConfigService().fetchConfig();
+
+      // Register FCM token with the backend now that we have a valid session.
+      PushNotificationService().registerWithBackend();
       
       notifyListeners();
     }

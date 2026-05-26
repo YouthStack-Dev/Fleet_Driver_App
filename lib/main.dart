@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
 import 'providers/location_provider.dart';
 import 'providers/booking_provider.dart';
+import 'providers/chat_provider.dart';
 import 'services/firebase_service.dart';
 import 'screens/login_screen.dart';
 
@@ -12,18 +13,27 @@ import 'screens/profile_screen.dart';
 import 'screens/switch_account_screen.dart';
 import 'screens/vendor_select_screen.dart';
 import 'screens/location_test_screen.dart';
+import 'screens/chat_screen.dart';
 import 'services/navigation_service.dart';
 import 'services/push_notification_service.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:page_transition/page_transition.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // Register the background FCM handler BEFORE Firebase is initialised.
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
   // Initialize Firebase (mock or real if configured)
   await FirebaseService().initialize();
   
-  // Initialize Push Notifications (FCM + Local Notifications)
+  // Initialize Push Notifications (FCM + Local Notifications + tap handlers)
   await PushNotificationService().initialize();
+
+  // Handle tap on notification that launched the app from terminated state.
+  // Must run after initialize() so the navigator is ready.
+  PushNotificationService().handleInitialMessage();
 
   runApp(const MyApp());
 }
@@ -38,6 +48,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => AuthProvider()..init()),
         ChangeNotifierProvider(create: (_) => LocationProvider()),
         ChangeNotifierProvider(create: (_) => BookingProvider()),
+        ChangeNotifierProvider(create: (_) => ChatProvider()),
       ],
       child: MaterialApp(
         title: 'Driver App',
@@ -88,6 +99,14 @@ class MyApp extends StatelessWidget {
               break;
             case '/location-test':
               page = const LocationTestScreen();
+              break;
+            case '/chat':
+              final args =
+                  settings.arguments as Map<String, dynamic>? ?? {};
+              page = ChatScreen(
+                bookingId: args['booking_id'] as int,
+                passengerName: args['passenger_name'] as String?,
+              );
               break;
             default:
               page = const LoginScreen();

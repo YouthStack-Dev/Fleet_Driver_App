@@ -7,6 +7,7 @@ import '../providers/location_provider.dart';
 import '../widgets/app_drawer.dart';
 import '../services/permission_service.dart';
 import 'package:flutter_staggered_animations/flutter_staggered_animations.dart';
+import 'chat_screen.dart';
 
 class RidesScreen extends StatefulWidget {
   const RidesScreen({super.key});
@@ -334,6 +335,11 @@ class _RidesScreenState extends State<RidesScreen> {
                 ),
               ),
               _buildStatusBadge(status),
+              // Chat button — visible whenever the booking has an ID
+              if (stop['booking_id'] != null) ...[
+                const SizedBox(width: 4),
+                _buildChatButton(stop),
+              ],
             ],
           ),
           const SizedBox(height: 4), // Reduced spacing
@@ -472,6 +478,52 @@ class _RidesScreenState extends State<RidesScreen> {
     }
     
     return _buildBadge(status, bg, fg);
+  }
+
+  /// A compact icon button that opens the chat screen for this passenger's booking.
+  Widget _buildChatButton(dynamic stop) {
+    return Tooltip(
+      message: 'Chat with ${stop['employee_name'] ?? 'passenger'}',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () {
+          final bookingId = stop['booking_id'];
+          final int? id = bookingId is int
+              ? bookingId
+              : int.tryParse(bookingId.toString());
+          if (id == null) return;
+          Navigator.push(
+            context,
+            PageRouteBuilder(
+              pageBuilder: (_, __, ___) => ChatScreen(
+                bookingId: id,
+                passengerName:
+                    stop['employee_name']?.toString(),
+              ),
+              transitionsBuilder:
+                  (_, animation, __, child) => FadeTransition(
+                opacity: animation,
+                child: child,
+              ),
+              transitionDuration:
+                  const Duration(milliseconds: 300),
+            ),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: const Color(0xFF6C63FF).withOpacity(0.1),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.chat_bubble_outline,
+            size: 18,
+            color: Color(0xFF6C63FF),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _handleStartDuty(String routeId, BookingProvider provider) async {

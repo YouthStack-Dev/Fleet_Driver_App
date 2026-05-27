@@ -190,6 +190,48 @@ class RouteService {
     }
   }
 
+  /// Send a GPS location ping for an ONGOING route — POST /driver/location.
+  /// Called every ~7 s while duty is active.
+  /// [speedKmh] is optional but should be passed whenever the device GPS
+  /// provides it; the server uses it for ETA recalc and speed enforcement.
+  /// Throws on non-2xx so the caller can apply retry logic.
+  Future<void> sendLocation({
+    required String routeId,
+    required double latitude,
+    required double longitude,
+    double? speedKmh,
+  }) async {
+    final params = <String, dynamic>{
+      'route_id': routeId,
+      'latitude': latitude,
+      'longitude': longitude,
+    };
+    if (speedKmh != null) params['speed'] = speedKmh;
+    await _dio.post(ApiEndpoints.driverLocation, queryParameters: params);
+  }
+
+  /// Board the escort — POST /driver/escort/board.
+  /// Must be called (with the escort's OTP) before any employee pickup on
+  /// routes that have an assigned escort.
+  Future<Map<String, dynamic>> escortBoard({
+    required String routeId,
+    required String otp,
+  }) async {
+    try {
+      _logger.i('Boarding escort for route: $routeId');
+      final response = await _dio.post(
+        ApiEndpoints.escortBoard,
+        queryParameters: {
+          'route_id': routeId,
+          'otp': int.tryParse(otp) ?? otp, // spec says otp is int
+        },
+      );
+      return {'success': true, 'data': response.data};
+    } on DioException catch (e) {
+      return _handleError(e);
+    }
+  }
+
   /// Cancel Booking
   Future<Map<String, dynamic>> cancelBooking(String bookingId) async {
     try {

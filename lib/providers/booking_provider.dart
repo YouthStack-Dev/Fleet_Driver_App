@@ -141,6 +141,25 @@ class BookingProvider extends ChangeNotifier {
     ));
   }
 
+  /// Board the escort on an ONGOING route before any employee pickup.
+  /// Calls POST /driver/escort/board with the escort's OTP.
+  Future<Map<String, dynamic>> escortBoard(String routeId, String otp) async {
+    _isLoading = true;
+    notifyListeners();
+    try {
+      final result = await _routeService.escortBoard(routeId: routeId, otp: otp);
+      if (result['success'] == true) {
+        await fetchTrips(status: 'ongoing'); // Refresh so escort_boarded flag updates
+      } else {
+        _error = result['error'];
+      }
+      return result;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
   Future<Map<String, dynamic>> markNoShow(String routeId, String bookingId, String? reason) async {
     return _performAction(() => _routeService.markNoShow(
       routeId: routeId,

@@ -2,17 +2,11 @@ import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 import 'package:logger/logger.dart';
 import '../config/constants.dart';
-import 'firebase_service.dart';
-import 'session_service.dart';
-import 'driver_config_service.dart';
-import 'speed_violation_service.dart';
+import 'route_service.dart';
 
 class LocationService {
   final Logger _logger = Logger();
-  final FirebaseService _firebaseService = FirebaseService();
-  final SessionService _sessionService = SessionService();
-  final DriverConfigService _driverConfigService = DriverConfigService();
-  final SpeedViolationService _speedViolationService = SpeedViolationService();
+  final RouteService _routeService = RouteService();
 
   // Singleton
   static final LocationService _instance = LocationService._internal();
@@ -25,12 +19,8 @@ class LocationService {
   // `if (_isTracking) return;` check before the flag is set.
   bool _startingTracking = false;
 
-  // Throttle Firebase writes — GPS ticks every 1 s but Firebase only needs 30 s
-  DateTime? _lastFirebaseUpdate;
-
-  // Track whether driver was previously over the limit so we can detect when
-  // they slow back down and reset the violation cooldown.
-  bool _wasOverLimit = false;
+  // Throttle REST pings — GPS ticks every 1 s but the backend needs 7 s
+  DateTime? _lastPingTime;
 
   // Broadcast stream — consumed by LocationProvider for live speed display
   final StreamController<Position> _positionController =
@@ -42,15 +32,15 @@ class LocationService {
       StreamController<bool>.broadcast();
   Stream<bool> get trackingStateStream => _trackingStateController.stream;
 
-  /// The currently-active route ID for speed-violation reporting.
-  /// Set via LocationProvider.setActiveRoute(); null disables checks.
+  /// The currently-active route ID for location pings.
+  /// Set via LocationProvider.setActiveRoute(); null suppresses all pings.
   String? _activeRouteId;
   String? get activeRouteId => _activeRouteId;
   set activeRouteId(String? value) {
     _activeRouteId = value;
     if (value != null) {
-      _speedViolationService.resetCooldown();
-      _wasOverLimit = false;
+      // Reset timer so the first ping fires immediately when duty starts.
+      _lastPingTime = null;
     }
   }
 
@@ -96,8 +86,7 @@ class LocationService {
     _logger.i('🚀 Starting location tracking');
     _isTracking = true;
     _startingTracking = false;
-    _lastFirebaseUpdate = null;
-    _wasOverLimit = false;
+    _lastPingTime = null;
     _trackingStateController.add(true); // HUD appears immediately in UI
 
     final locationSettings = AndroidSettings(
@@ -131,11 +120,9 @@ class LocationService {
         // 1. Push to UI (live speed HUD updates every ~1 s)
         _positionController.add(position);
 
-        // 2. Write to Firebase RTDB — throttled to once every 30 s
-        _maybeUpdateFirebase(position);
-
-        // 3. Speed-limit check — trigger / reset violation as needed
-        _checkSpeedViolation(position);
+        // 2. Send location ping to backend (throttled to once every 7 s,
+        //    only while a route is ONGOING)
+        _maybeSendLocationPing(position);
       },
       onError: (e) {
         _logger.e('Location stream error: $e');
@@ -160,7 +147,6 @@ class LocationService {
     _positionStreamSubscription = null;
     _isTracking = false;
     _activeRouteId = null;
-    _wasOverLimit = false;
     _trackingStateController.add(false);
   }
 
@@ -168,93 +154,68 @@ class LocationService {
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  void _checkSpeedViolation(Position position) {
-    if (_activeRouteId == null) return;
+  /// Throttle gate: sends a location ping at most once every 7 s,
+  /// and only when a route is actively ONGOING (_activeRouteId != null).
+  void _maybeSendLocationPing(Position position) {
+    if (_activeRouteId == null) return; // Not on an active route — suppress
 
-    // position.speed is -1.0 when GPS fix not yet acquired — clamp to 0
-    final speedKmph = (position.speed < 0 ? 0.0 : position.speed) * 3.6;
-    final limit = _driverConfigService.config.speedLimitKmph;
-
-    if (speedKmph > limit) {
-      // OVER the limit
-      // reportViolation() internally handles the 30-second repeat window:
-      //   - First call while over limit  → fires immediately
-      //   - Subsequent calls within 30 s → silently dropped
-      //   - After 30 s of continuous speeding → fires again
-      _speedViolationService.reportViolation(
-        routeId: _activeRouteId!,
-        speedKmph: speedKmph,
-        speedLimitKmph: limit,
-        latitude: position.latitude,
-        longitude: position.longitude,
-      );
-      _wasOverLimit = true;
-    } else {
-      // UNDER the limit
-      if (_wasOverLimit) {
-        // Driver just slowed down — reset cooldown so the NEXT overspeed
-        // triggers a fresh immediate alert rather than waiting out the old timer
-        _speedViolationService.resetCooldown();
-        _logger.d('Speed back under limit — violation cooldown reset');
-      }
-      _wasOverLimit = false;
-    }
-  }
-
-  /// Write location to Firebase at most once every 30 seconds.
-  void _maybeUpdateFirebase(Position position) {
     final now = DateTime.now();
-    if (_lastFirebaseUpdate != null &&
-        now.difference(_lastFirebaseUpdate!).inMilliseconds <
-            LocationConfig.firebaseUpdateIntervalMs) {
+    if (_lastPingTime != null &&
+        now.difference(_lastPingTime!).inMilliseconds <
+            LocationConfig.locationPingIntervalMs) {
       return; // Too soon — skip this tick
     }
-    _lastFirebaseUpdate = now;
-    _updateFirebase(position); // fire-and-forget
+    _lastPingTime = now;
+
+    // Convert m/s → km/h; pass null if GPS hasn't acquired a valid speed fix
+    final speedKmh = position.speed < 0 ? null : position.speed * 3.6;
+
+    _sendLocationPing(
+      routeId: _activeRouteId!,
+      latitude: position.latitude,
+      longitude: position.longitude,
+      speedKmh: speedKmh,
+    );
   }
 
-  Future<void> _updateFirebase(Position position) async {
+  /// Sends POST /driver/location. On network failure retries with exponential
+  /// back-off (2 s → 4 s → 8 s, up to 3 retries) so no GPS point is silently
+  /// dropped. After 3 retries the point is logged and discarded.
+  Future<void> _sendLocationPing({
+    required String routeId,
+    required double latitude,
+    required double longitude,
+    double? speedKmh,
+    int retryCount = 0,
+  }) async {
     try {
-      final session = await _sessionService.getSession();
-      if (session == null) {
-        _logger.w('Skipping Firebase update: No active session');
-        return;
-      }
-
-      final userData = session['user_data'];
-      final String? driverId = userData['driver_id']?.toString() ??
-          userData['user']?['driver']?['driver_id']?.toString() ??
-          userData['driver']?['driver_id']?.toString();
-
-      final String? tenantId = userData['tenant_id']?.toString() ??
-          userData['account']?['tenant_id']?.toString() ??
-          userData['user']?['tenant_id']?.toString() ??
-          userData['user']?['tenant']?['tenant_id']?.toString();
-
-      final String? vendorId = userData['vendor_id']?.toString() ??
-          userData['account']?['vendor_id']?.toString() ??
-          userData['user']?['driver']?['vendor_id']?.toString();
-
-      if (driverId != null && tenantId != null && vendorId != null) {
-        await _firebaseService.updateDriverLocation(
-          tenantId: tenantId,
-          vendorId: vendorId,
-          driverId: driverId,
-          latitude: position.latitude,
-          longitude: position.longitude,
-          additionalData: {
-            'accuracy': position.accuracy,
-            'speed': position.speed,
-            'heading': position.heading,
-            'provider': 'geolocator_flutter',
-          },
-        );
-      } else {
-        _logger.w(
-            'Skipping Firebase update: Missing IDs (D:$driverId, T:$tenantId, V:$vendorId)');
-      }
+      await _routeService.sendLocation(
+        routeId: routeId,
+        latitude: latitude,
+        longitude: longitude,
+        speedKmh: speedKmh,
+      );
+      _logger.d('✅ Location ping sent: ($latitude, $longitude)'
+          '${speedKmh != null ? " @ ${speedKmh.toStringAsFixed(1)} km/h" : ""}');
     } catch (e) {
-      _logger.e('Error in _updateFirebase', error: e);
+      _logger.w('⚠️ Location ping failed (attempt ${retryCount + 1}): $e');
+      if (retryCount < 3) {
+        final delaySeconds = 2 << retryCount; // 2 s, 4 s, 8 s
+        Future.delayed(Duration(seconds: delaySeconds), () {
+          // Only retry if tracking is still active on the same route
+          if (_isTracking && _activeRouteId == routeId) {
+            _sendLocationPing(
+              routeId: routeId,
+              latitude: latitude,
+              longitude: longitude,
+              speedKmh: speedKmh,
+              retryCount: retryCount + 1,
+            );
+          }
+        });
+      } else {
+        _logger.e('❌ Location ping dropped after ${retryCount + 1} attempts');
+      }
     }
   }
 }

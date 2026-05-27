@@ -158,6 +158,13 @@ class _RidesScreenState extends State<RidesScreen> {
     final routeId = route['route_id'];
     final logType = route['log_type'] ?? 'IN'; // IN/OUT
     final shiftTime = route['shift_time'] ?? 'N/A';
+
+    // Escort board — show when ONGOING, route has an escort, and not yet boarded
+    final bool hasEscort =
+        route['has_escort'] == true || route['escort_required'] == true;
+    final bool escortBoarded =
+        route['escort_boarded'] == true || route['escort_status'] == 'Boarded';
+    final bool showEscortBoard = isOngoing && hasEscort && !escortBoarded;
     
     return Card(
       elevation: 4,
@@ -250,6 +257,21 @@ class _RidesScreenState extends State<RidesScreen> {
                       ),
                    ),
                  
+                 if (showEscortBoard) ...[
+                   const SizedBox(height: 8),
+                   ElevatedButton.icon(
+                     onPressed: () => _handleEscortBoard(routeId.toString(), provider),
+                     icon: const Icon(Icons.security),
+                     label: const Text('BOARD ESCORT'),
+                     style: ElevatedButton.styleFrom(
+                       backgroundColor: Colors.teal,
+                       padding: const EdgeInsets.symmetric(vertical: 16),
+                       shape: RoundedRectangleBorder(
+                           borderRadius: BorderRadius.circular(8)),
+                     ),
+                   ),
+                 ],
+
                  if (isOngoing)
                    ElevatedButton.icon(
                       onPressed: () => _handleEndDuty(routeId.toString(), provider),
@@ -534,6 +556,26 @@ class _RidesScreenState extends State<RidesScreen> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Duty Started!')));
     } else if (mounted) {
        _showErrorDialog(provider.error ?? 'Failed');
+    }
+  }
+
+  /// Board the escort before any employee pickups on escort routes.
+  Future<void> _handleEscortBoard(String routeId, BookingProvider provider) async {
+    final otp = await _showOtpDialog(context, 'Escort');
+    if (otp == null || !mounted) return;
+
+    final result = await provider.escortBoard(routeId, otp);
+    if (!mounted) return;
+    if (result['success'] == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Escort boarded successfully!')),
+      );
+    } else {
+      if (result['errorCode'] == 'INVALID_OTP') {
+        _showInvalidOtpDialog();
+      } else {
+        _showErrorDialog(result['error'] ?? 'Failed to board escort');
+      }
     }
   }
 

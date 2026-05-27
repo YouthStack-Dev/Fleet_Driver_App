@@ -17,7 +17,6 @@ class ApiEndpoints {
   static const String tripStart = '/api/v1/driver/trip/start';
   static const String tripEnd = '/api/v1/driver/trip/drop'; // Fix: consistent naming
   static const String noShow = '/api/v1/driver/trip/no-show';
-  static const String tripDrop = '/api/v1/driver/trip/drop'; // Duplicate but keep for safety if used elsewhere
   
   static const String bookings = '/api/v1/bookings/employee';
   static const String bookingDetails = '/api/v1/bookings'; 
@@ -29,6 +28,16 @@ class ApiEndpoints {
   // Driver Config & Speed Monitoring
   static const String driverConfig = '/api/v1/driver/config';
   static const String speedViolation = '/api/v1/speed-violations/';
+
+  // Driver Location Ping (IMP-1 / IMP-2 / IMP-9)
+  /// POST — send GPS ping every 5–10 s while route is ONGOING.
+  /// Query params: route_id, latitude, longitude, speed (km/h, optional).
+  static const String driverLocation = '/api/v1/driver/location';
+
+  // Escort
+  /// POST — board the escort before any employee pickup on escort routes.
+  /// Query params: route_id, otp.
+  static const String escortBoard = '/api/v1/driver/escort/board';
 
   // Chat — Driver endpoints
   /// GET  /api/v1/driver/chat/{booking_id}          → open / retrieve session
@@ -66,7 +75,7 @@ class LocationConfig {
   /// Minimum movement before a GPS event fires (0 = always fire on interval).
   static const int distanceFilterMeters = 0;
 
-  /// How often the driver location is written to Firebase RTDB.
-  /// Kept at 30 s to avoid hammering the database.
-  static const int firebaseUpdateIntervalMs = 30000;
+  /// How often a location ping is sent to POST /driver/location while ONGOING.
+  /// Spec: every 5–10 s. Using 7 s as the midpoint.
+  static const int locationPingIntervalMs = 7000;
 }

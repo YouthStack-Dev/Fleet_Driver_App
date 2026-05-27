@@ -109,29 +109,8 @@ class _LocationTestScreenState extends State<LocationTestScreen> {
   }
 
   Future<void> _testFirebaseConnection() async {
-    _addLog("🧪 Starting Firebase Test...");
-    setState(() => _testing = true);
-    
-    try {
-      final result = await FirebaseService().updateDriverLocation(
-        tenantId: 'TEST_TENANT', 
-        vendorId: 'TEST_VENDOR', 
-        driverId: 'TEST_DRIVER_FLUTTER', 
-        latitude: 0.0, 
-        longitude: 0.0,
-        additionalData: {'test': true}
-      );
-      
-      if (result['success']) {
-        _addLog("✅ Firebase Success via ${result['method']}");
-      } else {
-        _addLog("❌ Firebase Failed: ${result['error']}");
-      }
-    } catch (e) {
-      _addLog("❌ Error: $e");
-    } finally {
-      setState(() => _testing = false);
-    }
+    _addLog("🧪 Firebase write test skipped — location is now sent via REST API (POST /driver/location).");
+    _addLog("ℹ️  Use the GPS test below to verify location reporting end-to-end.");
   }
 
   Future<void> _testGps() async {

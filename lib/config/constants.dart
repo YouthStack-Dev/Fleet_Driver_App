@@ -73,9 +73,27 @@ class LocationConfig {
   static const int updateIntervalMs = 1000;
 
   /// Minimum movement before a GPS event fires (0 = always fire on interval).
+  /// Kept at 0 so the speed HUD refreshes every second regardless of movement.
+  /// Stationary drift is filtered inside _maybeSendLocationPing instead.
   static const int distanceFilterMeters = 0;
 
   /// How often a location ping is sent to POST /driver/location while ONGOING.
   /// Spec: every 5–10 s. Using 7 s as the midpoint.
   static const int locationPingIntervalMs = 7000;
+
+  /// Speed (km/h) below which the stationary-drift guard is applied.
+  /// When device GPS reports a speed below this value, a ping is only sent
+  /// if the device has actually moved at least [minimumPingDistanceM] metres
+  /// since the last successful ping — preventing GPS jitter (±5–15 m while
+  /// parked) from accumulating as phantom distance on the server.
+  static const double stationarySpeedThresholdKmh = 5.0;
+
+  /// Minimum physical movement (metres) required before a ping fires while the
+  /// vehicle is stationary (speed < [stationarySpeedThresholdKmh]).
+  static const double minimumPingDistanceM = 15.0;
+
+  /// Maximum age (seconds) of a location ping before a retry is discarded.
+  /// Retries older than this would deliver stale coordinates with a wrong
+  /// timeline position, corrupting the server-side distance calculation.
+  static const int stalePingThresholdSeconds = 15;
 }

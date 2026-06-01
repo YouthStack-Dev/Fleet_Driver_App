@@ -192,14 +192,31 @@ class RouteService {
 
   /// Send a GPS location ping for an ONGOING route — POST /driver/location.
   /// Called every ~7 s while duty is active.
-  /// [speedKmh] is optional but should be passed whenever the device GPS
-  /// provides it; the server uses it for ETA recalc and speed enforcement.
+  ///
+  /// [speedKmh]       – Speed in km/h; null when GPS has no Doppler fix.
+  ///                    Server uses it for ETA recalc and speed enforcement.
+  /// [accuracyM]      – Horizontal accuracy radius in metres reported by the
+  ///                    GPS chip. Server can weight/discard low-quality fixes.
+  /// [capturedAt]     – UTC timestamp of when the GPS fix was captured on the
+  ///                    device. Sent as ISO-8601 so the server can sort
+  ///                    breadcrumbs by capture time rather than arrival time,
+  ///                    preventing out-of-order retries from corrupting the
+  ///                    distance calculation.
+  /// [deltaDistanceM] – Haversine distance (metres) from the last successfully
+  ///                    sent coordinate to this one, computed on the device.
+  ///                    The server cross-checks this against its own segment
+  ///                    sum to detect anomalous GPS jumps before they inflate
+  ///                    total_distance_km.
+  ///
   /// Throws on non-2xx so the caller can apply retry logic.
   Future<void> sendLocation({
     required String routeId,
     required double latitude,
     required double longitude,
     double? speedKmh,
+    double? accuracyM,
+    DateTime? capturedAt,
+    double? deltaDistanceM,
   }) async {
     final params = <String, dynamic>{
       'route_id': routeId,
@@ -207,6 +224,16 @@ class RouteService {
       'longitude': longitude,
     };
     if (speedKmh != null) params['speed'] = speedKmh;
+    // Round accuracy to the nearest metre — sub-metre precision is noise.
+    if (accuracyM != null) params['accuracy_m'] = accuracyM.round();
+    if (capturedAt != null) {
+      params['captured_at'] = capturedAt.toUtc().toIso8601String();
+    }
+    // Round to 2 decimal places (cm precision) to keep payload compact.
+    if (deltaDistanceM != null) {
+      params['delta_distance_m'] =
+          double.parse(deltaDistanceM.toStringAsFixed(2));
+    }
     await _dio.post(ApiEndpoints.driverLocation, queryParameters: params);
   }
 

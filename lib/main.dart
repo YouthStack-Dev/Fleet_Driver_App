@@ -75,7 +75,7 @@ class MyApp extends StatelessWidget {
             ),
           ),
         ),
-        home: const LoginScreen(),
+        home: const AuthWrapper(),
         onGenerateRoute: (settings) {
           Widget page;
           switch (settings.name) {
@@ -121,6 +121,40 @@ class MyApp extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+}
+
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AuthProvider>(
+      builder: (context, auth, _) {
+        switch (auth.status) {
+          case AuthStatus.unknown:
+            return const Scaffold(
+              backgroundColor: Color(0xFF051424),
+              body: Center(
+                child: CircularProgressIndicator(
+                  color: Color(0xFF2E7CFF),
+                  strokeWidth: 3,
+                ),
+              ),
+            );
+          case AuthStatus.authenticated:
+            return const RidesScreen();
+          case AuthStatus.tempAuthenticated:
+            final licenseNumber = auth.currentUser?['driver']?['license_number'] ?? 
+                                  auth.currentUser?['user']?['driver']?['license_number'] ?? 
+                                  auth.currentUser?['license_number'] ??
+                                  auth.driver?['license_number'] ?? 'LC123456';
+            return VendorSelectScreen(licenseNumber: licenseNumber);
+          case AuthStatus.unauthenticated:
+            return const LoginScreen();
+        }
+      },
     );
   }
 }

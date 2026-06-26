@@ -1,18 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../providers/auth_provider.dart';
 import '../providers/chat_provider.dart';
 import '../services/navigation_service.dart';
 
 /// Full-screen chat interface for a driver ↔ employee conversation.
-///
-/// Usage — push from the passenger card:
-/// ```dart
-/// Navigator.pushNamed(context, '/chat', arguments: {
-///   'booking_id': stop['booking_id'] as int,
-///   'passenger_name': stop['employee_name'] as String?,
-/// });
-/// ```
 class ChatScreen extends StatefulWidget {
   final int bookingId;
 
@@ -20,11 +13,6 @@ class ChatScreen extends StatefulWidget {
   final String? passengerName;
 
   /// RTDB path supplied directly by the FCM payload
-  /// (e.g. "chats/HS001/booking_418/messages").
-  /// When present this is used as the primary listener path so the app can
-  /// attach to Firebase immediately without waiting for the REST session call
-  /// to return — important on slow connections or when the session endpoint
-  /// is slightly delayed.
   final String? firebasePath;
 
   const ChatScreen({
@@ -51,60 +39,35 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _chatProvider = Provider.of<ChatProvider>(context, listen: false);
     _chatProvider.addListener(_onProviderUpdate);
-    // Tell the notification service this booking's chat is now on screen so
-    // it can suppress redundant push-notification banners.
     NavigationService.markChatOpen(widget.bookingId);
     WidgetsBinding.instance.addPostFrameCallback((_) => _initChat());
   }
 
-  // ---------------------------------------------------------------------------
-  // Init & lifecycle
-  // ---------------------------------------------------------------------------
-
   Future<void> _initChat() async {
-    // -----------------------------------------------------------------------
-    // IMPORTANT: Do NOT call listenToFirebase() here early.
-    // For a new booking the listener would be immediately cancelled by the
-    // clearChat() call below, and _knownKeys would be empty causing all
-    // existing RTDB children to be re-added as duplicates.
-    // The listener is always attached at the END of this method, after
-    // loadMessages() has fully populated _knownKeys.
-    // -----------------------------------------------------------------------
-
     final isSameBooking = _chatProvider.currentBookingId == widget.bookingId &&
         _chatProvider.session != null;
 
     if (!isSameBooking) {
-      // Different booking or first open — full reset.
       _chatProvider.clearChat();
 
-      // Load supported languages in parallel with session open so the language
-      // picker is ready as soon as the screen settles.
       await Future.wait([
         _chatProvider.loadSupportedLanguages(),
         _chatProvider.openSession(widget.bookingId),
       ]);
 
       if (!mounted) return;
-      if (_chatProvider.session == null) return; // openSession failed
+      if (_chatProvider.session == null) return;
     } else {
-      // Same booking re-open: ensure language list is populated if missing
-      // (edge case: app restarted with an in-progress booking).
       if (_chatProvider.supportedLanguages.isEmpty) {
         await _chatProvider.loadSupportedLanguages();
         if (!mounted) return;
       }
     }
 
-    // Refresh REST history (merges with any Firebase-only messages that
-    // arrived while the screen was closed).
     await _chatProvider.loadMessages(widget.bookingId);
 
     if (!mounted) return;
 
-    // Resolve and attach the RTDB listener.
-    // _resolveFirebasePath() guarantees a non-null path via 3-level fallback,
-    // so the listener is ALWAYS attached regardless of what the backend returns.
     final path = _resolveFirebasePath();
     if (path != null) {
       _chatProvider.listenToFirebase(
@@ -116,29 +79,13 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom(animated: false);
   }
 
-  /// Resolves the Firebase RTDB path for this booking's messages node.
-  ///
-  /// Tries each source in priority order:
-  ///   1. [widget.firebasePath]  — supplied directly by the FCM payload when
-  ///      the driver opens the chat via a notification tap.  Always correct.
-  ///   2. `session['firebase_path']` — returned by the REST session endpoint.
-  ///   3. Constructed locally as `chats/{tenantId}/booking_{bookingId}/messages`
-  ///      — a guaranteed fallback that works even when the backend does not
-  ///      return `firebase_path` in the session response.  Matches the exact
-  ///      path format confirmed by the backend team.
   String? _resolveFirebasePath() {
-    // 1. FCM-provided path (most reliable — backend sets it explicitly).
     if (widget.firebasePath?.isNotEmpty == true) return widget.firebasePath;
 
-    // 2. Session path returned by REST.
-    final sessionPath =
-        _chatProvider.session?['firebase_path'] as String?;
+    final sessionPath = _chatProvider.session?['firebase_path'] as String?;
     if (sessionPath?.isNotEmpty == true) return sessionPath;
 
-    // 3. Construct from tenantId + bookingId.
-    //    Backend-confirmed format: chats/{tenantId}/booking_{bookingId}/messages
-    final tenantId =
-        Provider.of<AuthProvider>(context, listen: false).tenantId;
+    final tenantId = Provider.of<AuthProvider>(context, listen: false).tenantId;
     if (tenantId.isNotEmpty && tenantId != 'N/A') {
       return 'chats/$tenantId/booking_${widget.bookingId}/messages';
     }
@@ -147,8 +94,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _onProviderUpdate() {
-    // Auto-scroll to the bottom when a new message arrives, but only if
-    // the user is already near the bottom (≤ 120 px away).
     if (!_scrollController.hasClients) return;
     final pos = _scrollController.position;
     if (pos.pixels >= pos.maxScrollExtent - 120) {
@@ -175,21 +120,11 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _chatProvider.removeListener(_onProviderUpdate);
-    // Mark the chat screen as no longer visible so the notification service
-    // can resume showing banners for this booking.
     NavigationService.markChatClosed(widget.bookingId);
-    // Do NOT cancel the Firebase listener here.  The provider is a singleton
-    // that outlives this screen, and the listener must stay alive so messages
-    // sent by the employee while the chat screen is closed are received and
-    // shown immediately when the driver reopens the screen.
     _textController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
-
-  // ---------------------------------------------------------------------------
-  // Actions
-  // ---------------------------------------------------------------------------
 
   Future<void> _sendMessage() async {
     final text = _textController.text.trim();
@@ -198,14 +133,14 @@ class _ChatScreenState extends State<ChatScreen> {
     _textController.clear();
     FocusScope.of(context).unfocus();
 
-    final ok =
-        await _chatProvider.sendMessage(widget.bookingId, text);
+    final ok = await _chatProvider.sendMessage(widget.bookingId, text);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-              _chatProvider.error ?? 'Failed to send message'),
-          backgroundColor: Colors.red[700],
+          content: Text(_chatProvider.error ?? 'Failed to send message', style: GoogleFonts.poppins()),
+          backgroundColor: Colors.red[800],
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
     }
@@ -219,97 +154,106 @@ class _ChatScreenState extends State<ChatScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius:
-            BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => DraggableScrollableSheet(
         expand: false,
-        initialChildSize: 0.55,
-        maxChildSize: 0.85,
+        initialChildSize: 0.6,
+        maxChildSize: 0.9,
+        minChildSize: 0.4,
         builder: (_, controller) => Column(
           children: [
-            // Handle
+            // Slide Bar Handle
             Container(
-              margin: const EdgeInsets.only(top: 10, bottom: 4),
-              width: 40,
-              height: 4,
+              margin: const EdgeInsets.only(top: 12, bottom: 8),
+              width: 38,
+              height: 4.5,
               decoration: BoxDecoration(
                 color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
+                borderRadius: BorderRadius.circular(2.5),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(
-                  vertical: 12, horizontal: 20),
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 24),
               child: Row(
                 children: [
-                  const Icon(Icons.translate,
-                      color: _primaryColor, size: 22),
+                  const Icon(Icons.translate_rounded, color: _primaryColor, size: 22),
                   const SizedBox(width: 10),
                   Text(
-                    'Chat Language',
-                    style: Theme.of(ctx)
-                        .textTheme
-                        .titleMedium
-                        ?.copyWith(fontWeight: FontWeight.bold),
+                    'Translation Settings',
+                    style: GoogleFonts.poppins(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      color: const Color(0xFF1E293B)
+                    ),
                   ),
                 ],
               ),
             ),
-            const Divider(height: 1),
+            const Divider(height: 1, thickness: 0.8, color: Color(0xFFF1F5F9)),
             Expanded(
               child: ListView(
                 controller: controller,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 children: languages.entries.map((entry) {
                   final isSelected = entry.key == current;
-                  return ListTile(
-                    leading: isSelected
-                        ? const Icon(Icons.check_circle,
-                            color: _primaryColor)
-                        : const Icon(Icons.radio_button_unchecked,
-                            color: Colors.grey),
-                    title: Text(entry.value),
-                    subtitle: Text(entry.key,
-                        style: const TextStyle(fontSize: 11)),
-                    selected: isSelected,
-                    selectedTileColor:
-                        _primaryColor.withOpacity(0.07),
-                    onTap: () async {
-                      Navigator.pop(ctx);
-                      final ok = await _chatProvider.setLanguage(
-                          widget.bookingId, entry.key);
-                      if (ok) {
-                        // Reload with newly-translated texts.
-                        await _chatProvider.loadMessages(
-                            widget.bookingId);
-                        _scrollToBottom(animated: false);
-                      }
-                    },
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 6),
+                    decoration: BoxDecoration(
+                      color: isSelected ? _primaryColor.withOpacity(0.06) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      leading: Icon(
+                        isSelected ? Icons.check_circle_rounded : Icons.circle_outlined,
+                        color: isSelected ? _primaryColor : Colors.grey.shade400,
+                        size: 22,
+                      ),
+                      title: Text(
+                        entry.value,
+                        style: GoogleFonts.poppins(
+                          fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                          color: isSelected ? _primaryColor : const Color(0xFF1E293B),
+                          fontSize: 14,
+                        ),
+                      ),
+                      subtitle: Text(
+                        entry.key.toUpperCase(),
+                        style: GoogleFonts.poppins(fontSize: 10, color: Colors.grey.shade500),
+                      ),
+                      onTap: () async {
+                        Navigator.pop(ctx);
+                        final ok = await _chatProvider.setLanguage(widget.bookingId, entry.key);
+                        if (ok) {
+                          await _chatProvider.loadMessages(widget.bookingId);
+                          _scrollToBottom(animated: false);
+                        }
+                      },
+                    ),
                   );
                 }).toList(),
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
           ],
         ),
       ),
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Build
-  // ---------------------------------------------------------------------------
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F6FA),
+      backgroundColor: const Color(0xFFF8F9FD),
       appBar: _buildAppBar(),
       body: Consumer<ChatProvider>(
         builder: (context, provider, _) {
           if (provider.isLoading && provider.messages.isEmpty) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(child: CircularProgressIndicator(color: _primaryColor, strokeWidth: 3));
           }
 
           if (provider.error != null && provider.messages.isEmpty) {
@@ -331,41 +275,53 @@ class _ChatScreenState extends State<ChatScreen> {
     return AppBar(
       backgroundColor: Colors.white,
       elevation: 0,
+      iconTheme: const IconThemeData(color: Color(0xFF1E293B)),
       leading: IconButton(
-        icon: const Icon(Icons.arrow_back, color: Colors.black),
+        icon: const Icon(Icons.arrow_back_rounded),
         onPressed: () => Navigator.pop(context),
       ),
+      titleSpacing: 0,
       title: Row(
         children: [
-          CircleAvatar(
-            radius: 18,
-            backgroundColor: _primaryColor.withOpacity(0.15),
-            child: const Icon(Icons.person,
-                color: _primaryColor, size: 20),
+          Container(
+            padding: const EdgeInsets.all(1.5),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(color: _primaryColor.withOpacity(0.2), width: 1.5),
+            ),
+            child: CircleAvatar(
+              radius: 17,
+              backgroundColor: _primaryColor.withOpacity(0.1),
+              child: const Icon(Icons.person_outline_rounded, color: _primaryColor, size: 18),
+            ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  widget.passengerName ?? 'Chat',
-                  style: const TextStyle(
+                  widget.passengerName ?? 'Passenger Chat',
+                  style: GoogleFonts.poppins(
                     fontSize: 15,
                     fontWeight: FontWeight.bold,
-                    color: Colors.black,
+                    color: const Color(0xFF1E293B),
                   ),
                   overflow: TextOverflow.ellipsis,
                 ),
                 Consumer<ChatProvider>(
                   builder: (_, p, __) {
-                    final langName =
-                        p.supportedLanguages[p.driverLanguage];
+                    final langName = p.supportedLanguages[p.driverLanguage];
                     if (langName == null) return const SizedBox.shrink();
-                    return Text(
-                      'Translating to $langName',
-                      style: const TextStyle(
-                          fontSize: 11, color: Colors.grey),
+                    return Row(
+                      children: [
+                        const Icon(Icons.g_translate_rounded, size: 10, color: Color(0xFF64748B)),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Translating to $langName',
+                          style: GoogleFonts.poppins(fontSize: 10, color: const Color(0xFF64748B), fontWeight: FontWeight.w500),
+                        ),
+                      ],
                     );
                   },
                 ),
@@ -377,17 +333,15 @@ class _ChatScreenState extends State<ChatScreen> {
       actions: [
         Consumer<ChatProvider>(
           builder: (_, p, __) => IconButton(
-            icon: const Icon(Icons.translate, color: Colors.black87),
-            tooltip: 'Change language',
-            onPressed: p.supportedLanguages.isNotEmpty
-                ? _showLanguagePicker
-                : null,
+            icon: const Icon(Icons.translate_rounded),
+            onPressed: p.supportedLanguages.isNotEmpty ? _showLanguagePicker : null,
           ),
         ),
+        const SizedBox(width: 8),
       ],
       bottom: PreferredSize(
         preferredSize: const Size.fromHeight(1),
-        child: Container(color: Colors.grey[200], height: 1),
+        child: Container(color: const Color(0xFFE2E8F0), height: 0.8),
       ),
     );
   }
@@ -399,19 +353,34 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.chat_bubble_outline,
-                size: 56, color: Colors.grey),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.red.shade50,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.error_outline_rounded, size: 40, color: Colors.red[600]),
+            ),
             const SizedBox(height: 16),
-            Text(error,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Colors.grey)),
-            const SizedBox(height: 16),
+            Text(
+              'Failed to load conversation',
+              style: GoogleFonts.poppins(fontWeight: FontWeight.bold, color: const Color(0xFF1E293B), fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              error,
+              textAlign: TextAlign.center,
+              style: GoogleFonts.poppins(color: const Color(0xFF64748B), fontSize: 13),
+            ),
+            const SizedBox(height: 20),
             ElevatedButton.icon(
               onPressed: _initChat,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
+              icon: const Icon(Icons.replay_rounded, size: 18),
+              label: Text('Retry', style: GoogleFonts.poppins(fontWeight: FontWeight.bold)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _primaryColor,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               ),
             ),
           ],
@@ -426,13 +395,24 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.chat_bubble_outline,
-                size: 56, color: Colors.grey[300]),
-            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFF6C63FF).withOpacity(0.06),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.chat_bubble_outline_rounded, size: 48, color: _primaryColor),
+            ),
+            const SizedBox(height: 16),
             Text(
-              'No messages yet.\nSend the first one!',
+              'No messages yet',
+              style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.bold, color: const Color(0xFF1E293B)),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Send the first message to the passenger.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey[500], fontSize: 15),
+              style: GoogleFonts.poppins(color: const Color(0xFF64748B), fontSize: 13),
             ),
           ],
         ),
@@ -441,8 +421,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return ListView.builder(
       controller: _scrollController,
-      padding:
-          const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       itemCount: provider.messages.length,
       itemBuilder: (context, index) {
         final msg = provider.messages[index];
@@ -452,59 +431,49 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Message bubble
-  // ---------------------------------------------------------------------------
+  Widget _buildMessageBubble(Map<String, dynamic> msg, Map<String, dynamic>? prevMsg) {
+    final senderType = (msg['sender_type'] as String?) ?? 'system';
+    final isSystem = (msg['is_system_message'] as bool?) ?? (senderType == 'system');
 
-  Widget _buildMessageBubble(
-    Map<String, dynamic> msg,
-    Map<String, dynamic>? prevMsg,
-  ) {
-    final senderType =
-        (msg['sender_type'] as String?) ?? 'system';
-    final isSystem =
-        (msg['is_system_message'] as bool?) ?? (senderType == 'system');
-
-    // Group spacing: tighter when consecutive messages from same sender.
     final prevSender = prevMsg?['sender_type'] as String?;
     final isContinuation = prevSender == senderType && !isSystem;
-    final topPadding = isContinuation ? 2.0 : 10.0;
+    final topPadding = isContinuation ? 3.0 : 12.0;
 
     if (isSystem) return _buildSystemMessage(msg, topPadding);
 
     final isDriver = senderType == 'driver';
     return Padding(
-      padding: EdgeInsets.only(top: topPadding, bottom: 0),
+      padding: EdgeInsets.only(top: topPadding),
       child: Row(
-        mainAxisAlignment:
-            isDriver ? MainAxisAlignment.end : MainAxisAlignment.start,
+        mainAxisAlignment: isDriver ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isDriver) ...[
             if (!isContinuation)
-              const CircleAvatar(
-                radius: 14,
-                backgroundColor: Color(0xFFE8E8E8),
-                child:
-                    Icon(Icons.person, size: 16, color: Colors.grey),
+              Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                child: CircleAvatar(
+                  radius: 13,
+                  backgroundColor: Colors.grey.shade200,
+                  child: Icon(Icons.person_rounded, size: 14, color: Colors.grey.shade500),
+                ),
               )
             else
-              const SizedBox(width: 28),
-            const SizedBox(width: 6),
+              const SizedBox(width: 26),
+            const SizedBox(width: 8),
           ],
           Flexible(
             child: Column(
-              crossAxisAlignment: isDriver
-                  ? CrossAxisAlignment.end
-                  : CrossAxisAlignment.start,
+              crossAxisAlignment: isDriver ? CrossAxisAlignment.end : CrossAxisAlignment.start,
               children: [
                 _buildBubble(msg, isDriver),
-                const SizedBox(height: 2),
-                Text(
-                  _formatTimestamp(
-                      msg['created_at']?.toString()),
-                  style: const TextStyle(
-                      fontSize: 10, color: Colors.grey),
+                const SizedBox(height: 3),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                  child: Text(
+                    _formatTimestamp(msg['created_at']?.toString()),
+                    style: GoogleFonts.poppins(fontSize: 9, color: Colors.grey.shade400, fontWeight: FontWeight.w500),
+                  ),
                 ),
               ],
             ),
@@ -515,37 +484,32 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildSystemMessage(
-      Map<String, dynamic> msg, double topPadding) {
-    final text = (msg['translated_text'] as String?) ??
-        (msg['original_text'] as String?) ??
-        '';
+  Widget _buildSystemMessage(Map<String, dynamic> msg, double topPadding) {
+    final text = (msg['translated_text'] as String?) ?? (msg['original_text'] as String?) ?? '';
 
     return Padding(
       padding: EdgeInsets.only(top: topPadding, bottom: 4),
       child: Center(
         child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 20),
-          padding: const EdgeInsets.symmetric(
-              horizontal: 14, vertical: 8),
+          margin: const EdgeInsets.symmetric(horizontal: 24),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.amber[50],
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.amber[200]!),
+            color: Colors.amber.shade50,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.amber.shade200, width: 0.8),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.info_outline,
-                  size: 13, color: Colors.amber[700]),
-              const SizedBox(width: 6),
+              Icon(Icons.info_outline_rounded, size: 14, color: Colors.amber[800]),
+              const SizedBox(width: 8),
               Flexible(
                 child: Text(
                   text,
-                  style: TextStyle(
+                  style: GoogleFonts.poppins(
                     fontSize: 11,
                     color: Colors.amber[900],
-                    fontStyle: FontStyle.italic,
+                    fontWeight: FontWeight.w500,
                     height: 1.4,
                   ),
                   textAlign: TextAlign.center,
@@ -559,62 +523,67 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildBubble(Map<String, dynamic> msg, bool isDriver) {
-    final displayText = (msg['translated_text'] as String?)
-            ?.trim()
-            .isNotEmpty ==
-        true
+    final displayText = (msg['translated_text'] as String?)?.trim().isNotEmpty == true
         ? (msg['translated_text'] as String)
         : ((msg['original_text'] as String?) ?? '');
 
-    final originalText =
-        (msg['original_text'] as String?) ?? '';
-    final showOriginal = displayText != originalText &&
-        originalText.isNotEmpty;
+    final originalText = (msg['original_text'] as String?) ?? '';
+    final showOriginal = displayText != originalText && originalText.isNotEmpty;
 
     return Container(
-      padding: const EdgeInsets.symmetric(
-          horizontal: 14, vertical: 9),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
         color: isDriver ? _primaryColor : Colors.white,
         borderRadius: BorderRadius.only(
-          topLeft: const Radius.circular(18),
-          topRight: const Radius.circular(18),
-          bottomLeft: Radius.circular(isDriver ? 18 : 4),
-          bottomRight: Radius.circular(isDriver ? 4 : 18),
+          topLeft: const Radius.circular(16),
+          topRight: const Radius.circular(16),
+          bottomLeft: Radius.circular(isDriver ? 16 : 4),
+          bottomRight: Radius.circular(isDriver ? 4 : 16),
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.07),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
+            color: Colors.black.withOpacity(0.03),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
           ),
         ],
+        border: isDriver ? null : Border.all(color: Colors.grey.withOpacity(0.08), width: 1),
       ),
       child: Column(
-        crossAxisAlignment: isDriver
-            ? CrossAxisAlignment.end
-            : CrossAxisAlignment.start,
+        crossAxisAlignment: isDriver ? CrossAxisAlignment.end : CrossAxisAlignment.start,
         children: [
           Text(
             displayText,
-            style: TextStyle(
-              color: isDriver ? Colors.white : Colors.black87,
+            style: GoogleFonts.poppins(
+              color: isDriver ? Colors.white : const Color(0xFF1E293B),
               fontSize: 14,
               height: 1.45,
             ),
           ),
-          // Show original language text beneath when translated.
+          // Show original text with globe translation indicator
           if (showOriginal) ...[
-            const SizedBox(height: 4),
-            Text(
-              originalText,
-              style: TextStyle(
-                color:
-                    isDriver ? Colors.white60 : Colors.black38,
-                fontSize: 11,
-                fontStyle: FontStyle.italic,
-                height: 1.3,
-              ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.g_translate_rounded, 
+                  size: 11, 
+                  color: isDriver ? Colors.white.withOpacity(0.5) : Colors.grey.shade400
+                ),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    originalText,
+                    style: GoogleFonts.poppins(
+                      color: isDriver ? Colors.white.withOpacity(0.6) : Colors.grey.shade400,
+                      fontSize: 11,
+                      fontStyle: FontStyle.italic,
+                      height: 1.3,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ],
@@ -622,35 +591,30 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------------
-  // Input bar
-  // ---------------------------------------------------------------------------
-
   Widget _buildInputBar(ChatProvider provider) {
-    final isActive =
-        (provider.session?['is_active'] as bool?) ?? true;
+    final isActive = (provider.session?['is_active'] as bool?) ?? true;
 
     if (!isActive) {
       return Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 16, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         decoration: BoxDecoration(
           color: Colors.white,
-          border: Border(top: BorderSide(color: Colors.grey[200]!)),
+          border: Border(top: BorderSide(color: Colors.grey.shade100)),
         ),
         child: SafeArea(
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.lock_outline,
-                  size: 14, color: Colors.grey[500]),
+              Icon(Icons.lock_outline_rounded, size: 14, color: Colors.grey[400]),
               const SizedBox(width: 6),
               Text(
                 'This chat session has ended.',
-                style: TextStyle(
-                    color: Colors.grey[500],
-                    fontStyle: FontStyle.italic,
-                    fontSize: 13),
+                style: GoogleFonts.poppins(
+                  color: Colors.grey[400],
+                  fontStyle: FontStyle.italic,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ],
           ),
@@ -659,16 +623,15 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
         color: Colors.white,
-        border: Border(top: BorderSide(color: Colors.grey[200]!)),
+        border: Border(top: BorderSide(color: Colors.grey.shade100)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withOpacity(0.03),
             blurRadius: 8,
-            offset: const Offset(0, -2),
+            offset: const Offset(0, -3),
           ),
         ],
       ),
@@ -684,35 +647,26 @@ class _ChatScreenState extends State<ChatScreen> {
                   maxLines: null,
                   maxLength: 1000,
                   keyboardType: TextInputType.multiline,
-                  textCapitalization:
-                      TextCapitalization.sentences,
-                  style: const TextStyle(fontSize: 14),
+                  textCapitalization: TextCapitalization.sentences,
+                  style: GoogleFonts.poppins(fontSize: 14),
                   decoration: InputDecoration(
                     hintText: 'Type a message…',
-                    hintStyle:
-                        TextStyle(color: Colors.grey[400]),
+                    hintStyle: GoogleFonts.poppins(color: Colors.grey[400]),
                     counterText: '',
                     filled: true,
-                    fillColor: Colors.grey[100],
-                    contentPadding:
-                        const EdgeInsets.symmetric(
-                            horizontal: 16, vertical: 10),
+                    fillColor: const Color(0xFFF1F5F9),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                     border: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(24),
+                      borderRadius: BorderRadius.circular(24),
                       borderSide: BorderSide.none,
                     ),
                     enabledBorder: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(24),
+                      borderRadius: BorderRadius.circular(24),
                       borderSide: BorderSide.none,
                     ),
                     focusedBorder: OutlineInputBorder(
-                      borderRadius:
-                          BorderRadius.circular(24),
-                      borderSide: BorderSide(
-                          color: _primaryColor.withOpacity(0.5),
-                          width: 1.5),
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: BorderSide(color: _primaryColor.withOpacity(0.3), width: 1),
                     ),
                   ),
                 ),
@@ -736,11 +690,12 @@ class _ChatScreenState extends State<ChatScreen> {
               height: 44,
               alignment: Alignment.center,
               child: const SizedBox(
-                width: 22,
-                height: 22,
+                width: 20,
+                height: 20,
                 child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    valueColor: AlwaysStoppedAnimation(_primaryColor)),
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation(_primaryColor),
+                ),
               ),
             )
           : SizedBox(
@@ -750,18 +705,16 @@ class _ChatScreenState extends State<ChatScreen> {
               child: FloatingActionButton.small(
                 onPressed: _sendMessage,
                 backgroundColor: _primaryColor,
-                elevation: 2,
+                elevation: 0,
+                hoverElevation: 0,
+                focusElevation: 0,
+                highlightElevation: 0,
                 heroTag: null,
-                child: const Icon(Icons.send,
-                    color: Colors.white, size: 20),
+                child: const Icon(Icons.send_rounded, color: Colors.white, size: 18),
               ),
             ),
     );
   }
-
-  // ---------------------------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------------------------
 
   String _formatTimestamp(String? iso) {
     if (iso == null || iso.isEmpty) return '';

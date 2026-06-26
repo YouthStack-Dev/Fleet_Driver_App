@@ -1,26 +1,28 @@
 import 'dart:async';
+import 'package:flutter/widgets.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:logger/logger.dart';
 import '../config/constants.dart';
-import 'route_service.dart';
+import 'session_service.dart';
+import 'background_tracking_service.dart';
 
-class LocationService {
+class LocationService with WidgetsBindingObserver {
   final Logger _logger = Logger();
-  final RouteService _routeService = RouteService();
 
   // Singleton
   static final LocationService _instance = LocationService._internal();
   factory LocationService() => _instance;
-  LocationService._internal();
+
+  LocationService._internal() {
+    _logger.i('Initializing LocationService with WidgetsBindingObserver');
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   StreamSubscription<Position>? _positionStreamSubscription;
   bool _isTracking = false;
   // Guard against concurrent async calls to startTracking() racing past the
   // `if (_isTracking) return;` check before the flag is set.
   bool _startingTracking = false;
-
-  // Throttle REST pings — GPS ticks every 1 s but the backend needs 7 s
-  DateTime? _lastPingTime;
 
   // Broadcast stream — consumed by LocationProvider for live speed display
   final StreamController<Position> _positionController =
@@ -34,17 +36,75 @@ class LocationService {
 
   /// The currently-active route ID for location pings.
   /// Set via LocationProvider.setActiveRoute(); null suppresses all pings.
+  /// Synchronizes across Memory, SessionService, and Native Foreground Service.
   String? _activeRouteId;
   String? get activeRouteId => _activeRouteId;
   set activeRouteId(String? value) {
+    if (_activeRouteId == value) return;
     _activeRouteId = value;
-    if (value != null) {
-      // Reset timer so the first ping fires immediately when duty starts.
-      _lastPingTime = null;
+    _logger.i('📍 Route ID updated in memory: $value');
+
+    if (value != null && value.isNotEmpty) {
+      // Sync with SessionService (SharedPreferences)
+      SessionService().saveActiveRoute(value);
+      // Sync with Native Foreground Service
+      SessionService().getAccessToken().then((token) {
+        if (token != null) {
+          _logger.i('Starting background tracking service for route: $value');
+          BackgroundTrackingService().startBackgroundTracking(
+            routeId: value,
+            accessToken: token,
+          );
+        } else {
+          _logger.w('⚠️ Cannot start background tracking: access token is null');
+        }
+      });
+    } else {
+      // Clear route in SharedPreferences and stop background service
+      _logger.i('Stopping background tracking service (route cleared)');
+      SessionService().clearActiveRoute();
+      BackgroundTrackingService().stopBackgroundTracking();
     }
   }
 
   bool get isTracking => _isTracking;
+
+  bool _hasPermission = true;
+  bool get hasPermission => _hasPermission;
+
+  final StreamController<bool> _permissionStateController =
+      StreamController<bool>.broadcast();
+  Stream<bool> get permissionStateStream => _permissionStateController.stream;
+
+  void _updatePermission(bool value) {
+    if (_hasPermission != value) {
+      _hasPermission = value;
+      _permissionStateController.add(value);
+      _logger.i('🔑 GPS Permission state updated: $value');
+    }
+  }
+
+  // ── App Lifecycle & Permission Recovery ──────────────────────────────────────
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _logger.i('📱 App lifecycle state transitioned to: $state');
+    if (state == AppLifecycleState.resumed) {
+      _checkPermissionRecovery();
+    }
+  }
+
+  Future<void> _checkPermissionRecovery() async {
+    final permission = await Geolocator.checkPermission();
+    final hasPerm = permission == LocationPermission.always ||
+        permission == LocationPermission.whileInUse;
+    
+    _updatePermission(hasPerm);
+
+    if (hasPerm && _isTracking && _positionStreamSubscription == null) {
+      _logger.i('🔄 GPS Permission restored. Automatically restarting location stream.');
+      _subscribeToGpsStream();
+    }
+  }
 
   Future<bool> checkPermission() async {
     bool serviceEnabled;
@@ -53,6 +113,7 @@ class LocationService {
     serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
       _logger.w('Location services are disabled.');
+      _updatePermission(false);
       return false;
     }
 
@@ -61,161 +122,97 @@ class LocationService {
       permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
         _logger.w('Location permissions are denied');
+        _updatePermission(false);
         return false;
       }
     }
 
     if (permission == LocationPermission.deniedForever) {
       _logger.w('Location permissions permanently denied.');
+      _updatePermission(false);
       return false;
     }
 
+    _updatePermission(true);
     return true;
   }
 
-  Future<void> startTracking() async {
-    if (_isTracking || _startingTracking) return;
+  Future<bool> startTracking() async {
+    if (_isTracking || _startingTracking) return _isTracking;
     _startingTracking = true;
 
     final hasPermission = await checkPermission();
     if (!hasPermission) {
       _startingTracking = false;
-      return;
+      return false;
     }
 
-    _logger.i('🚀 Starting location tracking');
+    _logger.i('🚀 Starting location tracking stream');
     _isTracking = true;
     _startingTracking = false;
-    _lastPingTime = null;
     _trackingStateController.add(true); // HUD appears immediately in UI
+
+    _subscribeToGpsStream();
+    return true;
+  }
+
+  void _subscribeToGpsStream() {
+    _positionStreamSubscription?.cancel();
 
     final locationSettings = AndroidSettings(
       accuracy: LocationAccuracy.high,
-      // distanceFilter 0 = emit on every interval tick regardless of movement
       distanceFilter: LocationConfig.distanceFilterMeters, // 0
-      // GPS ticks every 1 second — live speed display
       intervalDuration:
           const Duration(milliseconds: LocationConfig.updateIntervalMs), // 1 s
-      // ForegroundNotificationConfig re-enabled after patching
-      // GeolocatorLocationService.java to call:
-      //   startForeground(id, notification, FOREGROUND_SERVICE_TYPE_LOCATION)
-      // on API 29+ (Android 10+). Without the type flag, Android 14 blocks
-      // all location delivery from the foreground service.
-      // enableWakeLock keeps the CPU awake for reliable GPS delivery.
-      foregroundNotificationConfig: const ForegroundNotificationConfig(
-        notificationTitle: 'Location Tracking Active',
-        notificationText: 'Driver app is monitoring your speed.',
-        enableWakeLock: true,
-      ),
+      // Geolocator's internal foreground service config is REMOVED.
+      // The Native Kotlin Foreground Service handles the persistent notification.
     );
 
     _positionStreamSubscription =
         Geolocator.getPositionStream(locationSettings: locationSettings).listen(
       (Position position) {
         final kmh = (position.speed < 0 ? 0.0 : position.speed) * 3.6;
-        _logger.d('📍 New location: ${position.latitude.toStringAsFixed(5)}, '
-            '${position.longitude.toStringAsFixed(5)} | '
+        _logger.d('📍 GPS Location: (${position.latitude.toStringAsFixed(5)}, '
+            '${position.longitude.toStringAsFixed(5)}) | '
             '${kmh.toStringAsFixed(1)} km/h | acc: ${position.accuracy.toStringAsFixed(0)} m');
 
-        // 1. Push to UI (live speed HUD updates every ~1 s)
+        // Emit to UI stream
         _positionController.add(position);
-
-        // 2. Send location ping to backend (throttled to once every 7 s,
-        //    only while a route is ONGOING)
-        _maybeSendLocationPing(position);
       },
       onError: (e) {
-        _logger.e('Location stream error: $e');
-        // Reset tracking state so the next startTracking() call can retry.
-        _isTracking = false;
-        _trackingStateController.add(false);
+        _logger.e('❌ Location stream error: $e. Retrying connection in 5s.');
+        _handleStreamError();
       },
       onDone: () {
-        // Stream closed (e.g., geolocator service restarted or permission revoked).
-        // Reset so callers can restart.
-        _logger.w('Location stream closed unexpectedly — resetting tracking state');
-        _isTracking = false;
-        _trackingStateController.add(false);
+        _logger.w('⚠️ Location stream closed unexpectedly. Retrying connection in 5s.');
+        _handleStreamError();
       },
     );
     _logger.i('✅ GPS stream subscription created');
   }
 
+  void _handleStreamError() {
+    _positionStreamSubscription?.cancel();
+    _positionStreamSubscription = null;
+
+    // Do NOT set _isTracking = false or stop tracking.
+    // Instead, schedule an automatic reconnect.
+    if (_isTracking) {
+      Future.delayed(const Duration(seconds: 5), () {
+        if (_isTracking && _positionStreamSubscription == null) {
+          _logger.i('🔄 Re-subscribing to GPS stream...');
+          _subscribeToGpsStream();
+        }
+      });
+    }
+  }
+
   Future<void> stopTracking() async {
-    _logger.i('🛑 Stopping location tracking');
+    _logger.i('🛑 Stopping location tracking stream');
     await _positionStreamSubscription?.cancel();
     _positionStreamSubscription = null;
     _isTracking = false;
     _activeRouteId = null;
     _trackingStateController.add(false);
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
-
-  /// Throttle gate: sends a location ping at most once every 7 s,
-  /// and only when a route is actively ONGOING (_activeRouteId != null).
-  void _maybeSendLocationPing(Position position) {
-    if (_activeRouteId == null) return; // Not on an active route — suppress
-
-    final now = DateTime.now();
-    if (_lastPingTime != null &&
-        now.difference(_lastPingTime!).inMilliseconds <
-            LocationConfig.locationPingIntervalMs) {
-      return; // Too soon — skip this tick
-    }
-    _lastPingTime = now;
-
-    // Convert m/s → km/h; pass null if GPS hasn't acquired a valid speed fix
-    final speedKmh = position.speed < 0 ? null : position.speed * 3.6;
-
-    _sendLocationPing(
-      routeId: _activeRouteId!,
-      latitude: position.latitude,
-      longitude: position.longitude,
-      speedKmh: speedKmh,
-    );
-  }
-
-  /// Sends POST /driver/location. On network failure retries with exponential
-  /// back-off (2 s → 4 s → 8 s, up to 3 retries) so no GPS point is silently
-  /// dropped. After 3 retries the point is logged and discarded.
-  Future<void> _sendLocationPing({
-    required String routeId,
-    required double latitude,
-    required double longitude,
-    double? speedKmh,
-    int retryCount = 0,
-  }) async {
-    try {
-      await _routeService.sendLocation(
-        routeId: routeId,
-        latitude: latitude,
-        longitude: longitude,
-        speedKmh: speedKmh,
-      );
-      _logger.d('✅ Location ping sent: ($latitude, $longitude)'
-          '${speedKmh != null ? " @ ${speedKmh.toStringAsFixed(1)} km/h" : ""}');
-    } catch (e) {
-      _logger.w('⚠️ Location ping failed (attempt ${retryCount + 1}): $e');
-      if (retryCount < 3) {
-        final delaySeconds = 2 << retryCount; // 2 s, 4 s, 8 s
-        Future.delayed(Duration(seconds: delaySeconds), () {
-          // Only retry if tracking is still active on the same route
-          if (_isTracking && _activeRouteId == routeId) {
-            _sendLocationPing(
-              routeId: routeId,
-              latitude: latitude,
-              longitude: longitude,
-              speedKmh: speedKmh,
-              retryCount: retryCount + 1,
-            );
-          }
-        });
-      } else {
-        _logger.e('❌ Location ping dropped after ${retryCount + 1} attempts');
-      }
-    }
   }
 }

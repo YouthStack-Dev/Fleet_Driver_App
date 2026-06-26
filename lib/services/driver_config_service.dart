@@ -11,18 +11,26 @@ class DriverConfig {
   final bool isBoardingOtpRequired;
   final bool isDeboardingOtpRequired;
   final bool isSafetyEnabled;
+  final int uploadIntervalSeconds;
 
   const DriverConfig({
     required this.speedLimitKmph,
     required this.isBoardingOtpRequired,
     required this.isDeboardingOtpRequired,
     required this.isSafetyEnabled,
+    required this.uploadIntervalSeconds,
   });
 
   factory DriverConfig.fromJson(Map<String, dynamic> json) {
     final speed = json['speed'] as Map<String, dynamic>? ?? {};
     final otp = json['otp'] as Map<String, dynamic>? ?? {};
     final safety = json['safety'] as Map<String, dynamic>? ?? {};
+    final tracking = json['tracking'] as Map<String, dynamic>? ?? {};
+    final uploadInterval = json['upload_interval_seconds'] as int? ??
+        tracking['upload_interval_seconds'] as int? ??
+        json['upload_interval'] as int? ??
+        60;
+
     return DriverConfig(
       speedLimitKmph:
           (speed['effective_speed_limit_kmph'] as num?)?.toDouble() ?? 60.0,
@@ -31,6 +39,7 @@ class DriverConfig {
       isDeboardingOtpRequired:
           otp['is_deboarding_otp_required'] as bool? ?? false,
       isSafetyEnabled: safety['is_enabled'] as bool? ?? false,
+      uploadIntervalSeconds: uploadInterval,
     );
   }
 
@@ -39,6 +48,7 @@ class DriverConfig {
         'is_boarding_otp_required': isBoardingOtpRequired,
         'is_deboarding_otp_required': isDeboardingOtpRequired,
         'is_safety_enabled': isSafetyEnabled,
+        'upload_interval_seconds': uploadIntervalSeconds,
       };
 
   static DriverConfig get defaults => const DriverConfig(
@@ -46,6 +56,7 @@ class DriverConfig {
         isBoardingOtpRequired: false,
         isDeboardingOtpRequired: false,
         isSafetyEnabled: false,
+        uploadIntervalSeconds: 60,
       );
 }
 
@@ -81,7 +92,7 @@ class DriverConfigService {
           _config = DriverConfig.fromJson(data);
           await _saveToPrefs(_config);
           _logger.i(
-              'DriverConfig refreshed: speedLimit=${_config.speedLimitKmph} kmph');
+              'DriverConfig refreshed: speedLimit=${_config.speedLimitKmph} kmph, uploadInterval=${_config.uploadIntervalSeconds}s');
         } else {
           _logger.w('DriverConfig: unexpected response shape: $body');
         }
@@ -98,20 +109,22 @@ class DriverConfigService {
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_prefsKey);
-      if (raw == null) return;
-
-      final json = jsonDecode(raw) as Map<String, dynamic>;
-      _config = DriverConfig(
-        speedLimitKmph:
-            (json['speed_limit_kmph'] as num?)?.toDouble() ?? 60.0,
-        isBoardingOtpRequired:
-            json['is_boarding_otp_required'] as bool? ?? false,
-        isDeboardingOtpRequired:
-            json['is_deboarding_otp_required'] as bool? ?? false,
-        isSafetyEnabled: json['is_safety_enabled'] as bool? ?? false,
-      );
+      if (raw != null) {
+        final json = jsonDecode(raw) as Map<String, dynamic>;
+        _config = DriverConfig(
+          speedLimitKmph:
+              (json['speed_limit_kmph'] as num?)?.toDouble() ?? 60.0,
+          isBoardingOtpRequired:
+              json['is_boarding_otp_required'] as bool? ?? false,
+          isDeboardingOtpRequired:
+              json['is_deboarding_otp_required'] as bool? ?? false,
+          isSafetyEnabled: json['is_safety_enabled'] as bool? ?? false,
+          uploadIntervalSeconds: json['upload_interval_seconds'] as int? ?? 60,
+        );
+      }
+      await prefs.setInt('upload_interval_seconds', _config.uploadIntervalSeconds);
       _logger.d(
-          'DriverConfig loaded from cache: speedLimit=${_config.speedLimitKmph} kmph');
+          'DriverConfig loaded from cache: speedLimit=${_config.speedLimitKmph} kmph, uploadInterval=${_config.uploadIntervalSeconds}s');
     } catch (e) {
       _logger.w('DriverConfig: failed to load cache — $e');
     }
@@ -121,6 +134,7 @@ class DriverConfigService {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_prefsKey, jsonEncode(config.toJson()));
+      await prefs.setInt('upload_interval_seconds', config.uploadIntervalSeconds);
     } catch (e) {
       _logger.w('DriverConfig: failed to save cache — $e');
     }

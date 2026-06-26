@@ -3,12 +3,13 @@ import 'package:logger/logger.dart';
 import '../config/constants.dart';
 import 'api_client.dart';
 import 'session_service.dart';
-import 'dart:convert';
+import 'background_tracking_service.dart';
 
 class AuthService {
   final Dio _dio = ApiClient().client;
   final SessionService _sessionService = SessionService();
   final Logger _logger = Logger();
+  Future<Map<String, dynamic>>? _ongoingRefresh;
 
   // Singleton
   static final AuthService _instance = AuthService._internal();
@@ -21,29 +22,30 @@ class AuthService {
     required Map<String, dynamic> deviceData,
   }) async {
     try {
-      _logger.i('Attempting device verification for: $dlNumber');
-      print('🔐 Calling Verify Device: ${ApiEndpoints.deviceVerify}');
+      final cleanDl = dlNumber.trim().toUpperCase();
+      _logger.i('Attempting device verification for: $cleanDl');
+      _logger.d('🔐 Calling Verify Device: ${ApiEndpoints.deviceVerify}');
       
       final payload = {
-        'dl_number': dlNumber,
+        'dl_number': cleanDl,
         ...deviceData,
       };
       
       final response = await _dio.post(ApiEndpoints.deviceVerify, data: payload);
-      print('🔐 Verify Response: ${response.data}');
+      _logger.d('🔐 Verify Response: ${response.data}');
       final responseData = response.data;
-      print('🔐 Verify Response Type: ${responseData.runtimeType}');
+      _logger.d('🔐 Verify Response Type: ${responseData.runtimeType}');
 
       if (responseData is! Map) {
-         print('❌ Error: Expected Map for response body, got ${responseData.runtimeType}');
+         _logger.e('❌ Error: Expected Map for response body, got ${responseData.runtimeType}');
          return {'success': false, 'error': 'Invalid server response format'};
       }
 
       final data = responseData['data'];
-      print('🔐 Data Type: ${data.runtimeType}');
+      _logger.d('🔐 Data Type: ${data.runtimeType}');
       
       if (data is List) {
-         print('❌ Error: Expected Map for "data", got List');
+         _logger.e('❌ Error: Expected Map for "data", got List');
          return {'success': false, 'error': 'Invalid server response (Data is List)'};
       }
       
@@ -51,7 +53,7 @@ class AuthService {
       
       // Validate Status
       if (dataMap['status'] != 'approved') {
-         print('⛔ Device Not Approved: ${dataMap['status']}');
+         _logger.w('⛔ Device Not Approved: ${dataMap['status']}');
          return {
            'success': false, 
            'error': responseData['message'] ?? 'Device status is ${dataMap['status']}. Please contact support.',
@@ -85,18 +87,19 @@ class AuthService {
     required String tenantId,
   }) async {
     try {
-      _logger.i('Selecting Tenant: V:$vendorId, T:$tenantId');
-      print('🔐 Calling Select Tenant: ${ApiEndpoints.selectTenant}');
+      final cleanDl = dlNumber.trim().toUpperCase();
+      _logger.i('Selecting Tenant: V:$vendorId, T:$tenantId for DL: $cleanDl');
+      _logger.d('🔐 Calling Select Tenant: ${ApiEndpoints.selectTenant}');
       
       final payload = {
-        'dl_number': dlNumber,
+        'dl_number': cleanDl,
         'android_id': deviceData['android_id'],
         'vendor_id': int.tryParse(vendorId) ?? vendorId,
         'tenant_id': tenantId,
       };
 
       final response = await _dio.post(ApiEndpoints.selectTenant, data: payload);
-      print('🔐 Select Tenant Response received');
+      _logger.d('🔐 Select Tenant Response received');
 
       final data = response.data['data'] ?? {};
       final accessToken = data['access_token'] ?? data['token'];
@@ -166,11 +169,32 @@ class AuthService {
 
   /// Step 3: Refresh Token
   Future<Map<String, dynamic>> refreshToken() async {
+    if (_ongoingRefresh != null) {
+      _logger.i('🔑 Token refresh already in progress, awaiting...');
+      return _ongoingRefresh!;
+    }
+
+    _ongoingRefresh = _performTokenRefresh();
+    try {
+      final result = await _ongoingRefresh!;
+      return result;
+    } finally {
+      _ongoingRefresh = null;
+    }
+  }
+
+  Future<Map<String, dynamic>> _performTokenRefresh() async {
     try {
       final session = await _sessionService.getSession();
       final refreshToken = session?['refresh_token'];
       
-      if (refreshToken == null) return {'success': false, 'error': 'No refresh token available'};
+      if (refreshToken == null) {
+        return {
+          'success': false, 
+          'error': 'No refresh token available',
+          'errorCode': 'EXPIRED_REFRESH_TOKEN'
+        };
+      }
 
       _logger.i('Refreshing Token...');
       
@@ -178,50 +202,92 @@ class AuthService {
         'refresh_token': refreshToken
       });
       
+      _logger.i('🔄 Refresh Response Body: ${response.data}');
       final data = response.data['data'] ?? {};
       final newAccessToken = data['access_token'] ?? data['token'];
       final newRefreshToken = data['refresh_token']; // Might be rotated
+      _logger.i('🔑 New Access Token generated: ${newAccessToken != null ? "...${newAccessToken.substring(newAccessToken.length > 10 ? newAccessToken.length - 10 : 0)}" : "null"}');
 
       if (newAccessToken != null) {
+         final refreshedUser = (data['user_data'] ??
+             data['user'] ??
+             session?['user_data']) as Map<String, dynamic>? ?? {};
+
          await _sessionService.setSession(
            accessToken: newAccessToken,
            refreshToken: newRefreshToken ?? refreshToken, // Update if new one provided
-           userData: session?['user_data'], 
+           userData: refreshedUser,
          );
+         
+         // Trigger BackgroundTrackingService().syncSession() immediately after a successful token refresh
+         await BackgroundTrackingService().syncSession();
+
          return {'success': true, 'access_token': newAccessToken};
       }
       
-      return {'success': false, 'error': 'Token missing in refresh response'};
+      return {
+        'success': false, 
+        'error': 'Token missing in refresh response',
+        'errorCode': 'SERVER_ERROR'
+      };
     } on DioException catch (e) {
       _logger.e('Refresh failed', error: e);
       return _handleError(e);
     } catch (e) {
-      return {'success': false, 'error': e.toString()};
+      return {
+        'success': false, 
+        'error': e.toString(),
+        'errorCode': 'UNKNOWN'
+      };
     }
   }
 
   Map<String, dynamic> _handleError(DioException e) {
-    String error = 'Network error';
+    String error = 'Server error';
+    String errorCode = 'UNKNOWN';
+
+    final isTimeout = e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.receiveTimeout ||
+        e.type == DioExceptionType.sendTimeout;
+    final isNetwork = e.type == DioExceptionType.connectionError;
+    final status = e.response?.statusCode;
+
+    if (isTimeout) {
+      errorCode = 'TIMEOUT';
+      error = 'Connection timed out';
+    } else if (isNetwork) {
+      errorCode = 'NETWORK_ERROR';
+      error = 'Network connection error';
+    } else if (status != null) {
+      if (status == 400 || status == 401 || status == 403) {
+        errorCode = 'INVALID_REFRESH';
+        error = 'Session expired';
+      } else if (status >= 500) {
+        errorCode = 'SERVER_ERROR';
+        error = 'Server error ($status)';
+      }
+    }
+
     if (e.response?.data != null) {
       final data = e.response?.data;
       if (data is Map) {
          // Handle nested detail object (common in 403/401)
          if (data['detail'] is Map) {
-           final detail = data['detail'];
-           error = detail['message'] ?? detail['error'] ?? 'Unknown error';
-           // Append error code if available for UI logic
-           if (detail['error_code'] != null) {
-             error += ' (${detail['error_code']})';
-           }
+            final detail = data['detail'];
+            error = detail['message'] ?? detail['error'] ?? error;
+            if (detail['error_code'] != null) {
+              error += ' (${detail['error_code']})';
+              errorCode = detail['error_code'].toString();
+            }
          } else {
-           error = data['detail'] ?? 
-                  data['message'] ?? 
-                  data['error'] ?? 
-                  'Server error: ${e.response?.statusCode}';
+            error = data['detail'] ?? 
+                   data['message'] ?? 
+                   data['error'] ?? 
+                   error;
          }
       }
     }
-    return {'success': false, 'error': error};
+    return {'success': false, 'error': error, 'errorCode': errorCode};
   }
 
   /// Step 4: Switch Company (Reuses Select Tenant)
@@ -261,6 +327,22 @@ class AuthService {
       
       return {'success': false, 'error': 'Please use selectTenant for switching'};
     } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
+  /// Step 5: Logout
+  Future<Map<String, dynamic>> logout() async {
+    try {
+      _logger.i('Attempting backend logout: ${ApiEndpoints.logout}');
+      final response = await _dio.post(ApiEndpoints.logout);
+      _logger.i('Backend logout response: ${response.data}');
+      return {'success': true};
+    } on DioException catch (e) {
+      _logger.e('Backend logout failed', error: e);
+      return _handleError(e);
+    } catch (e) {
+      _logger.e('Backend logout unexpected error', error: e);
       return {'success': false, 'error': e.toString()};
     }
   }

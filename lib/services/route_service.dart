@@ -245,6 +245,46 @@ class RouteService {
     }
   }
 
+  /// Fetch Driver History Report
+  Future<Map<String, dynamic>> getDriverHistoryReport({
+    required String startDate,
+    required String endDate,
+  }) async {
+    try {
+      final queryParams = {
+        'start_date': startDate,
+        'end_date': endDate,
+      };
+
+      _logger.i('Fetching history report: $queryParams');
+      final response = await _dio.get(
+        ApiEndpoints.driverHistoryReport,
+        queryParameters: queryParams,
+      );
+
+      final responseData = response.data;
+      if (responseData is Map && responseData['success'] == true) {
+        final data = responseData['data'] ?? {};
+        return {
+          'success': true,
+          'summary': data['summary'] ?? {},
+          'bookings': data['bookings'] ?? [],
+        };
+      }
+
+      return {
+        'success': false,
+        'error': (responseData is Map ? responseData['message'] : null) ?? 'Failed to load report',
+      };
+    } on DioException catch (e) {
+      _logger.e('Failed to fetch history report', error: e);
+      return _handleError(e);
+    } catch (e) {
+      _logger.e('History report unexpected error', error: e);
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
   Map<String, dynamic> _handleError(DioException e) {
     String error = 'Network error';
     String? errorCode;
